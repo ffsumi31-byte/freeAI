@@ -1,24 +1,35 @@
-"""BrickForge AI v2 — cognitive core. Bugfixed + expanded.
-New: connector-joint rotation splitting (no crashes), time-budgeted beam search,
-hill-climb refinement, pattern painter, pose system, evolution from memory,
-detail LOD, richer critique, hardened generate()."""
+"""BrickForge AI v3 — cognitive core + CONTEXT upgrade.
+v3: stem-matching ontology, subject extraction, person/generic fallbacks,
+misspelling normalizer, context critique check. v2: connector joints, budgeted
+beam search, hill-climb, patterns, poses, evolution. v1: geometry/color/rig."""
 import math, random, re, colorsys, zlib, time
 from collections import Counter
-BUDGET = 7.0  # seconds max per generate call (Render-safe)
+BUDGET = 7.0
 
-# ============================ 1. LEXICON / ONTOLOGY ============================
+# ============================ 1. LEXICON / ONTOLOGY (v3) ============================
+MISSPELL = {"hooman":"human","humen":"human","humin":"human","humen":"human","octupus":"octopus",
+ "squid":"squid","dragin":"dragon","dragno":"dragon","dragn":"dragon","spidr":"spider",
+ "spoder":"spider","spida":"spider","crabb":"crab","crabbe":"crab","fishh":"fish","fishe":"fish",
+ "birb":"bird","bruh":"human","roboot":"robot","robott":"robot","meck":"mech","turtel":"turtle",
+ "turtle":"turtle","jelley":"jelly","jellyfish":"jellyfish","knightt":"knight","warior":"warrior",
+ "wizzard":"wizard","magician":"wizard","snek":"snake","serpant":"serpent","lobstar":"lobster"}
 ARCH_SYN = {
- "octopus": ["octopus","squid","kraken","cephalopod","ink"],
- "serpent": ["snake","serpent","dragon","wyrm","eel","viper","wyvern"],
- "fish":    ["fish","shark","koi","bass","piranha","manta","goldfish"],
- "bird":    ["bird","eagle","phoenix","falcon","owl","raven","parrot","hawk"],
- "crab":    ["crab","lobster","scorpion","shrimp","prawn"],
- "spider":  ["spider","arachnid","tarantula","weaver"],
- "golem":   ["golem","titan","colossus","elemental"],
- "humanoid":["robot","humanoid","knight","warrior","mech","android","samurai","guard"],
- "turtle":  ["turtle","tortoise","snail"],
- "jelly":   ["jelly","jellyfish","medusa","blob"]}
+ "octopus": ["octopus","squid","kraken","cephalopod","ink","tentacled"],
+ "serpent": ["snake","serpent","dragon","wyrm","eel","viper","wyvern","cobra","python","serpentine"],
+ "fish":    ["fish","shark","koi","bass","piranha","manta","goldfish","salmon","whale","carp"],
+ "bird":    ["bird","eagle","phoenix","falcon","owl","raven","parrot","hawk","crow","robin","avian"],
+ "crab":    ["crab","lobster","scorpion","shrimp","prawn","crustacean"],
+ "spider":  ["spider","arachnid","tarantula","weaver","webber"],
+ "golem":   ["golem","titan","colossus","elemental","rock","stone","boulder","giant"],
+ "humanoid":["human","humans","humanoid","person","people","man","woman","boy","girl","guy","dude",
+             "avatar","player","character","npc","figure","hero","villain","knight","warrior",
+             "robot","mech","android","samurai","guard","wizard","mage","soldier","ninja","pirate"],
+ "turtle":  ["turtle","tortoise","snail","terrapin"],
+ "jelly":   ["jelly","jellyfish","medusa","blob","slime"]}
 ARCHES = list(ARCH_SYN)
+PERSON = {"human","humans","person","people","man","woman","boy","girl","guy","dude","avatar",
+ "player","character","npc","figure","hero","villain","wizard","mage","knight","warrior","soldier"}
+GENERIC = {"creature","monster","beast","animal","pet","thing","being","entity","mob","boss","companion"}
 INHERENT = {"octopus":{"tentacles"},"serpent":{"tail"},"fish":{"fins","tail"},"bird":{"wings"},
  "crab":{"claws"},"spider":set(),"golem":{"armor"},"humanoid":{"armor"},"turtle":{"shell","tail"},
  "jelly":{"tentacles","frill"}}
@@ -62,16 +73,34 @@ COLOR_WORDS = {"red":(0,0.85,0.62),"crimson":(348,0.9,0.55),"scarlet":(8,0.9,0.6
  "mint":(160,0.45,0.8),"coral":(12,0.8,0.72),"lavender":(265,0.45,0.8),"turquoise":(175,0.7,0.6),
  "silver":(210,0.08,0.82),"bronze":(22,0.65,0.5)}
 
-# ============================ 2. INTENT PARSER ============================
+# ============================ 2. INTENT PARSER (v3 context) ============================
 def tokenize(t): return re.findall(r"[a-z]+", t.lower())
+def _arch_hits(tokens, raw):
+    c = Counter()
+    for a, syns in ARCH_SYN.items():
+        for s in syns:
+            if " " in s:
+                if s in raw: c[a] += 2
+                continue
+            for tok in tokens:
+                if tok == s: c[a] += 2; break
+                if min(len(tok), len(s)) >= 4 and (tok.startswith(s) or s.startswith(tok)):
+                    c[a] += 1; break
+    return c
 def parse_intent(prompt):
-    toks = tokenize(prompt); raw = prompt.lower()
+    raw = prompt.lower()
+    for k, v in MISSPELL.items(): raw = re.sub(r"\b%s\b" % k, v, raw)
+    toks = tokenize(raw)
     I = {"arch": Counter(), "traits": {}, "neg": set(), "colors": [], "size": 1.0, "sharp": 1.0,
          "sat": 1.0, "val": 1.0, "style": 1.0, "mood": None, "material": None, "pattern": None,
-         "pose": 0, "tokens": set(toks)}
-    for a, syn in ARCH_SYN.items():
-        for s in syn:
-            if s in raw: I["arch"][a] += 2 if s == a else 1
+         "pose": 0, "subject": None, "tokens": set(toks)}
+    I["arch"] = _arch_hits(toks, raw)
+    # CONTEXT FALLBACK: reason about the subject when no direct synonym hit
+    if not I["arch"]:
+        if I["tokens"] & PERSON: I["arch"]["humanoid"] += 3
+        elif I["tokens"] & GENERIC: I["arch"] = Counter({a: 1 for a in ARCHES})
+        else: I["arch"] = Counter({a: 1 for a in ARCHES})
+    I["subject"] = I["arch"].most_common(1)[0][0]
     for tr, syn in TRAIT_SYN.items():
         for s in syn:
             m = re.search(r"\b%s" % re.escape(s), raw)
@@ -135,9 +164,8 @@ def synthesize_palette(I, rng, base_override):
            "S": hsv_hex(h+off+rng.choice([-30,30]), max(0.45, s*0.9), min(1, v*1.1)),
            "D": hsv_hex(h, min(1, s*1.05), max(0.1, v*0.42)),
            "L": hsv_hex(h+15, max(0.06, s*0.35), min(1, v*1.55))}
-    for g in range(8):  # gradient slots for pattern painter
-        t = g/7.0
-        pal["G%d"%g] = hsv_hex(*lerp_hsv(hex_hsv(pal["A"]), hex_hsv(pal["S"]), t))
+    for g in range(8):
+        pal["G%d"%g] = hsv_hex(*lerp_hsv(hex_hsv(pal["A"]), hex_hsv(pal["S"]), g/7.0))
     return pal
 
 # ============================ 4. ANATOMY MATH ============================
@@ -153,7 +181,7 @@ def phyllotaxis(i, n, spread):
     return r*math.sin(th), r*math.cos(th)
 def taper(t, p): return (1-t)**p
 
-# ============================ 5. PART DSL (crash-proof, connector joints) ============================
+# ============================ 5. PART DSL (crash-proof connector joints) ============================
 class Builder:
     def __init__(self, seed, palette, rng, sharp, scale, style):
         self.parts = []; self.names = set(); self.pal = palette; self.rng = rng
@@ -164,7 +192,6 @@ class Builder:
         while n in self.names: n = "%s%d" % (base, i); i += 1
         self.names.add(n); return n
     def _emit(self, name, parent, shape, size, pos, rot, color):
-        """Single-axis-safe emission: multi-axis rotations are split into connector joints."""
         axes = [i for i, v in enumerate(rot) if v]
         size = [round(v*self.scale,2) for v in size]; pos = [round(v*self.scale,2) for v in pos]
         if len(axes) <= 1:
@@ -615,38 +642,39 @@ def b_jelly(B,I,rng):
 BUILDERS = {"octopus":b_octopus,"serpent":b_serpent,"fish":b_fish,"bird":b_bird,"crab":b_crab,
  "spider":b_spider,"golem":b_golem,"humanoid":b_humanoid,"turtle":b_turtle,"jelly":b_jelly}
 
-# ============================ 9. SELF-CRITIQUE ============================
+# ============================ 9. SELF-CRITIQUE (v3 + context check) ============================
 def critique(spec, I):
     rep = {}; tot = 0.0; wsum = 0.0
     def add(k, v, w):
         rep[k] = int(round(v*100)); return v*w
+    top = I["arch"].most_common(1)[0][0] if I["arch"] else None
+    tot += add("context", 1.0 if (top is None or spec["archetype"] == top) else 0.15, 0.14); wsum += 0.14
     want = set(I["traits"]) - I["neg"]; have = set(spec.get("traits_present", []))
     hit = len(want & have)/max(1,len(want)) if want else 1.0
     neg_pen = len(I["neg"] & have)*0.25
-    tot += add("trait_match", max(0, hit-neg_pen), 0.28); wsum += 0.28
+    tot += add("trait_match", max(0, hit-neg_pen), 0.24); wsum += 0.24
     if I["colors"]:
-        ds = [max(0,1-hue_dist(ih,min(hex_hsv(h)[0] for h in spec["palette"].values()),)/90.0)
-              if False else max(0,1-min(hue_dist(ih,hex_hsv(h)[0]) for h in spec["palette"].values())/90.0)
+        ds = [max(0, 1-min(hue_dist(ih, hex_hsv(h)[0]) for h in spec["palette"].values())/90.0)
               for ih,_,_ in I["colors"]]
-        tot += add("color_match", sum(ds)/len(ds), 0.20); wsum += 0.20
+        tot += add("color_match", sum(ds)/len(ds), 0.18); wsum += 0.18
     else:
-        tot += add("color_match", 0.85, 0.20); wsum += 0.20
+        tot += add("color_match", 0.85, 0.18); wsum += 0.18
     cs = 1.0
     for tr, meta in I["traits"].items():
         if meta.get("count"):
             cs *= 1.0 if spec.get("counts",{}).get(tr,0)==meta["count"] else 0.55
-    tot += add("count_match", cs, 0.12); wsum += 0.12
+    tot += add("count_match", cs, 0.10); wsum += 0.10
     names = {p["n"] for p in spec["parts"]}; mir = spec.get("mirrored",[])
     ok = sum(1 for a,b in mir if a in names and b in names)/max(1,len(mir))
-    tot += add("symmetry", ok, 0.10); wsum += 0.10
+    tot += add("symmetry", ok, 0.09); wsum += 0.09
     n = len(spec["parts"])
-    tot += add("complexity", 1.0 if 40<=n<=260 else (0.7 if 25<=n<=340 else 0.4), 0.08); wsum += 0.08
+    tot += add("complexity", 1.0 if 40<=n<=260 else (0.7 if 25<=n<=340 else 0.4), 0.07); wsum += 0.07
     sizes = [p["sz"][0] for p in spec["parts"]]
-    tot += add("silhouette", clamp((max(sizes)-min(sizes))/max(0.001,max(sizes))/0.8,0,1), 0.07); wsum += 0.07
-    tot += add("sharp_match", max(0,1-abs(I["sharp"]-spec["sharpness"])/2.0), 0.07); wsum += 0.07
-    tot += add("scale_match", max(0,1-abs(I["size"]-spec["scale"])/0.8), 0.05); wsum += 0.05
+    tot += add("silhouette", clamp((max(sizes)-min(sizes))/max(0.001,max(sizes))/0.8,0,1), 0.06); wsum += 0.06
+    tot += add("sharp_match", max(0,1-abs(I["sharp"]-spec["sharpness"])/2.0), 0.06); wsum += 0.06
+    tot += add("scale_match", max(0,1-abs(I["size"]-spec["scale"])/0.8), 0.04); wsum += 0.04
     tot += add("pattern", 1.0 if (I["pattern"] and spec["meta"].get("painted")) or not I["pattern"] else 0.5,
-               0.03); wsum += 0.03
+               0.02); wsum += 0.02
     return int(round(100*tot/wsum)), rep
 NAME_PRE = ["Brick","Stud","Krag","Zor","Bloxx","Torv","Pixl","Grim","Lux","Vex","Snap","Mek",
  "Vor","Quil","Rune","Ember","Frost","Thorn","Gale","Umber"]
@@ -694,7 +722,7 @@ def _build(I, arch, seed, feat, mpal_hsv, evolve_pal):
             "scale":round(B.scale,2),"palette":pal,"tags":sorted(B.present),"root":B.root,
             "parts":B.parts,"mirrored":B.mirrored,"counts":dict(B.counts),
             "traits_present":sorted(B.present),
-            "meta":{"scheme":"v2","painted":painted,"prompt":I.get("_prompt","")}}
+            "meta":{"scheme":"v3","painted":painted,"prompt":I.get("_prompt","")}}
     return spec
 def generate(body, mem):
     t0 = time.time()
@@ -731,7 +759,7 @@ def generate(body, mem):
         seed = zlib.crc32(("%s|%d|%s|%d"%(prompt,it,nonce,k)).encode())
         rng = random.Random(seed)
         if I["arch"]:
-            arch = I["arch"].most_common(1)[0][0] if (k==0 and rng.random()<0.8) else rng.choice(list(I["arch"]) or ARCHES)
+            arch = I["arch"].most_common(1)[0][0] if (k==0 and rng.random()<0.85) else rng.choice(list(I["arch"]))
         else: arch = rng.choice(ARCHES)
         if "wrong shape" in reasons: arch = ARCHES[(ARCHES.index(arch)+k+1)%len(ARCHES)]
         try: spec = _build(I, arch, seed, feat, mpal and hex_hsv(mpal["A"]) or None, evolve_pal)
@@ -739,7 +767,6 @@ def generate(body, mem):
         tried += 1
         score, rep = critique(spec, I); spec["score"] = score; spec["report"] = rep
         if best is None or score > best["score"]: best = spec
-    # hill-climb refinement on the winner
     if best:
         for m in range(3):
             if time.time()-t0 > BUDGET: break
@@ -750,10 +777,9 @@ def generate(body, mem):
             except Exception: continue
             s2, r2 = critique(cand, I2); cand["score"] = s2; cand["report"] = r2; tried += 1
             if s2 > best["score"]: best = cand
-    if best is None:  # absolute fallback: never hang, never crash
-        best = _build(I, "golem", 1, feat, None, None); best["score"], best["report"] = critique(best, I)
+    if best is None:
+        best = _build(I, "humanoid", 1, feat, None, None); best["score"], best["report"] = critique(best, I)
         tried = 1
     if best["score"] > 85: best["name"] += " " + random.Random(best["seed"]).choice(EPITHETS)
-    best["meta"].update({"beam":K,"tried":tried,"iteration":it,
-                         "seconds":round(time.time()-t0,2)})
+    best["meta"].update({"beam":K,"tried":tried,"iteration":it,"seconds":round(time.time()-t0,2)})
     return best
