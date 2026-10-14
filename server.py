@@ -135,6 +135,10 @@ class H(BaseHTTPRequestHandler):
             return self._send(make_zip(body.get("spec",{}),body.get("snapshot")),"application/zip",200,
                               {"Content-Disposition":"attachment; filename=BrickForge_model.zip"})
         self._send(b"{}","application/json",404)
+# ... (rest of server.py) ...
+
 if __name__=="__main__":
-    port=int(os.environ.get("PORT",8000)); print("BrickForge AI brain online → http://localhost:%d"%port)
-    ThreadingHTTPServer(("127.0.0.1",port),H).serve_forever()
+    port = int(os.environ.get("PORT", 8000))
+    # CRITICAL FIX: Bind to 0.0.0.0 so Render can see the server
+    print(f"BrickForge AI brain online → http://0.0.0.0:{port}") 
+    ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
