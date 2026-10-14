@@ -115,7 +115,14 @@ class H(BaseHTTPRequestHandler):
         if os.path.isfile(fp): return self._send(open(fp,"rb").read(),CT.get(os.path.splitext(fp)[1],"application/octet-stream"))
         self._send(b"not found","text/plain",404)
     def do_POST(self):
-        n=int(self.headers.get("Content-Length",0)); body=json.loads(self.rfile.read(n) or b"{}")
+                if self.path=="/api/generate":
+            try:
+                # This calls your new 10k-line brain
+                return self._send(json.dumps(brain.generate(body,load_mem())).encode())
+            except Exception as e:
+                # If the brain crashes, this sends an error message instead of hanging
+                import traceback; traceback.print_exc()
+                return self._send(json.dumps({"error": str(e)}).encode(), "application/json", 500)
         if self.path=="/api/generate": return self._send(json.dumps(brain.generate(body,load_mem())).encode())
         if self.path=="/api/vote":
             m=load_mem(); spec=body.get("spec",{}); arch=spec.get("archetype","?")
