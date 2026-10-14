@@ -1,0 +1,17 @@
+---
+
+### 5. How to Push to GitHub
+Once you have saved all the files in the structure above:
+
+1.  Open your terminal in the `BrickForge-AI` folder.
+2.  Run these commands:
+    ```bash
+    git init
+    git add .
+    git commit -m "Initial commit: BrickForge AI core + UI"
+    git branch -M main
+    git remote add origin https://github.com/YOUR_USERNAME/BrickForge-AI.git
+    git push -u origin main
+    ```
+
+This gives you a clean, professional repository that looks like a serious software project rather than just a script dump.
