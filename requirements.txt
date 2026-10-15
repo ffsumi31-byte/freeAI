@@ -1,3 +1,1 @@
-# BrickForge AI Requirements
-# This project uses Python Standard Library only (no pip installs needed).
-# Tested on Python 3.8+
+
