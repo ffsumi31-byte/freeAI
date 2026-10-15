@@ -96,10 +96,9 @@ def search_internet_knowledge(prompt):
     if subject in _WIKI_CACHE:
         return head_noun, _WIKI_CACHE[subject]
 
-    headers = {"User-Agent": "RobloxCloud3DModeler/4.0 (https://onrender.com)"}
+    headers = {"User-Agent": "RobloxCloud3DModeler/4.1 (https://onrender.com)"}
     summary_text = ""
 
-    # 1. Try direct Wikipedia summary for subject or head_noun
     for query_term in (subject, head_noun):
         if not query_term:
             continue
@@ -114,7 +113,6 @@ def search_internet_knowledge(prompt):
         except Exception:
             pass
 
-    # 2. Fallback to Wikipedia OpenSearch if direct summary missed
     if not summary_text and head_noun:
         search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(subject)}&utf8=&format=json&srlimit=2"
         try:
@@ -159,22 +157,21 @@ Return ONLY valid JSON with this exact schema:
   ]
 }
 STRICT 3D MODELING RULES:
-1. NO LEGO STUDS. Build smooth, stylized Roblox game assets using 18 to 48 parts.
+1. NO LEGO STUDS. Build smooth, stylized Roblox game assets using 16 to 45 parts.
 2. Root part MUST have `"p": null`, `"stage": "raw"`, and `"attach": {"face": "center", "u": 0, "v": 0, "inset": 0}`.
 3. Every other part MUST specify `"p": "ExistingParentName"` and attach to one of its parent's faces:
    - `"front"` is -Z, `"back"` is +Z, `"right"` is +X, `"left"` is -X, `"top"` is +Y, `"bot"` is -Y.
    - `"u"` (-0.9 to 0.9) offsets horizontally across that face.
    - `"v"` (-0.9 to 0.9) offsets vertically/longitudinally across that face.
    - `"inset"` (0.02 to 0.15) embeds the child slightly into the parent so parts NEVER float in mid-air.
-4. For left/right symmetrical parts (eyes, ears, legs, arms, wheels, wings, headlights), create ONLY the right-side part ending in `R` (e.g. `"LegFR"`, `"EyeR"`, `"WingR"`) with positive `u` or `"face": "right"`, and set `"mirror": true`. The compiler will automatically generate the matching `L` part!
-5. Keep parent parts that have children attached to them at rotation `"ro": [0, 0, 0]` so child face attachments stay axis-aligned and never drift.
+4. For left/right symmetrical parts (eyes, ears, legs, arms, wheels, wings, headlights), create ONLY the right-side part ending in `R` (e.g. `"LegFR"`, `"EyeR"`, `"WingR"`) with positive `u` or `"face": "right"`, and set `"mirror": true`.
+5. Keep parent parts that have children attached to them at rotation `"ro": [0, 0, 0]` so child face attachments stay axis-aligned.
 6. Label core body/walls as `"stage": "raw"`, limbs/roofs/wheels/wings as `"stage": "shape"`, and eyes/ears/windows/doors/trim/buttons/weapons as `"stage": "detail"`.
-7. Output ONLY the raw JSON object, no markdown fences or commentary."""
+7. Output ONLY the raw JSON object."""
 
 def _extract_json_block(text):
     if not text:
         return None
-    # Strip markdown code blocks if present
     cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip())
     cleaned = re.sub(r"\s*```$", "", cleaned)
     m = re.search(r"\{[\s\S]*\}", cleaned)
@@ -182,7 +179,7 @@ def _extract_json_block(text):
         return None
     try:
         data = json.loads(m.group(0))
-        if isinstance(data, dict) and isinstance(data.get("parts"), list) and len(data["parts"]) >= 6:
+        if isinstance(data, dict) and isinstance(data.get("parts"), list) and len(data["parts"]) >= 5:
             return data
     except Exception:
         pass
@@ -197,7 +194,7 @@ def call_cloud_llm_architect(prompt, wiki_summary, seed, api_key=""):
         "Ensure all sub-parts, proportions, and details are included and properly attached. Return ONLY JSON."
     )
 
-    # 1. If user provided a Gemini API key (AIza...)
+    # 1. Gemini API key (AIza...)
     if key.startswith("AIza"):
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}"
@@ -216,10 +213,10 @@ def call_cloud_llm_architect(prompt, wiki_summary, seed, api_key=""):
         except Exception:
             pass
 
-    # 2. If user provided a Groq (gsk_...) or OpenAI (sk-...) key
+    # 2. Groq (gsk_...) or OpenAI (sk-...) key
     if key.startswith("gsk_") or key.startswith("sk-"):
         try:
-             is_groq = key.startswith("gsk_")
+            is_groq = key.startswith("gsk_")
             url = "https://api.groq.com/openai/v1/chat/completions" if is_groq else "https://api.openai.com/v1/chat/completions"
             model = "llama-3.3-70b-versatile" if is_groq else "gpt-4o-mini"
             payload = {
@@ -232,8 +229,9 @@ def call_cloud_llm_architect(prompt, wiki_summary, seed, api_key=""):
                 "response_format": {"type": "json_object"}
             }
             req = urllib.request.Request(
-                url, data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}", "User-Agent": "RobloxCloud3D/4.0"},
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}", "User-Agent": "RobloxCloud3D/4.1"},
                 method="POST"
             )
             with urllib.request.urlopen(req, timeout=12.0) as resp:
@@ -245,7 +243,7 @@ def call_cloud_llm_architect(prompt, wiki_summary, seed, api_key=""):
         except Exception:
             pass
 
-    # 3. Default Keyless Cloud LLM Attempt (Pollinations OpenAI-compatible POST endpoint)
+    # 3. Default Keyless Cloud LLM Attempt (Pollinations POST + GET fallback)
     for model_name in ("openai", "mistral"):
         try:
             payload = {
@@ -261,10 +259,10 @@ def call_cloud_llm_architect(prompt, wiki_summary, seed, api_key=""):
             req = urllib.request.Request(
                 "https://text.pollinations.ai/openai",
                 data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 RobloxCloud3D/4.0"},
+                headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 RobloxCloud3D/4.1"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=8.5) as resp:
+            with urllib.request.urlopen(req, timeout=8.0) as resp:
                 raw = resp.read().decode("utf-8")
                 try:
                     outer = json.loads(raw)
@@ -281,7 +279,6 @@ def call_cloud_llm_architect(prompt, wiki_summary, seed, api_key=""):
 
 # =========================================================================
 # 4. UNIVERSAL WIKIPEDIA-DRIVEN COMPOSITIONAL 3D SYNTHESIZER
-#    (Builds thousands of distinct objects dynamically from semantic & Wiki traits)
 # =========================================================================
 def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
     """Constructs bespoke 3D models by analyzing prompt + Wikipedia anatomy/structure."""
@@ -309,7 +306,7 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
         })
 
     # ---------------------------------------------------------------------
-    # DOMAIN A: ARCHITECTURE & BUILDINGS (Houses, Shops, Castles, Pagodas, Towers, Bridges)
+    # DOMAIN A: ARCHITECTURE & BUILDINGS
     # ---------------------------------------------------------------------
     if any(w in ptoks for w in (
         "building", "house", "home", "cabin", "cottage", "mansion", "villa", "shop", "store",
@@ -330,11 +327,9 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
         trim_c = c_sec or ("#1e293b" if wall_c != "#334155" else "#cbd5e1")
         roof_c = "#1e293b" if not is_castle else "#2563eb"
 
-        # Stage 1: Raw Architectural Massing
         P("Foundation", None, "raw", "box", (w + 1.0, 0.65, d + 1.0), "center", c=trim_c, mat="Slate")
         P("MainWalls", "Foundation", "raw", "box", (w, th, d), "top", u=0, v=0, inset=0.02, c=wall_c, mat="Cobblestone" if is_castle else ("SmoothPlastic" if is_sky else "Brick"))
 
-        # Stage 2: Structural Shaping (Pilasters, Cornices, Turrets, Multi-Tier Roofs)
         for ux, sx_tag in ((0.96, "R"), (-0.96, "L")):
             for vz, sz_tag in ((-0.96, "F"), (0.96, "B")):
                 P(f"Pilaster{sx_tag}{sz_tag}", "MainWalls", "shape", "box", (0.48, th + 0.05, 0.48), "front" if sz_tag=="F" else "back", u=ux, v=0, inset=0.22, c=trim_c, mat="Slate")
@@ -371,7 +366,6 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
             P("PitchedRoof", "MainWalls", "shape", "wedge", (w + 0.9, 2.2 * jh, d + 0.9), "top", u=0, v=0, inset=0.02, c=roof_c, mat="Slate")
             P("ChimneyStack", "MainWalls", "shape", "box", (0.9, 2.5, 0.9), "top", u=0.58, v=0.35, inset=0.05, c="#78350f", mat="Brick")
 
-        # Stage 3: Detailed Entryway, Stairs, Awning, Mullioned Glass Windows
         P("EntryStairs", "Foundation", "detail", "box", (2.6, 0.48, 0.95), "front", u=0, v=-0.08, inset=0.05, c=trim_c, mat="Slate")
         v_door = -1.0 + (2.2 / th)
         P("DoorFrame", "MainWalls", "detail", "box", (1.95, 2.25, 0.24), "front", u=0, v=v_door, inset=0.04, c="#0f172a", mat="Metal")
@@ -398,16 +392,16 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
         return {"category": "building", "riggable": False, "parts": parts}, "Architectural Multi-Story Modeler"
 
     # ---------------------------------------------------------------------
-    # DOMAIN B: GROUND VEHICLES (Sports Cars, Trucks, SUVs, Buses, Tanks, Bikes)
+    # DOMAIN B: GROUND VEHICLES
     # ---------------------------------------------------------------------
     if any(w in ptoks for w in (
         "car", "sportscar", "racecar", "supercar", "sedan", "coupe", "suv", "jeep", "truck",
         "pickup", "van", "bus", "taxi", "policecar", "ambulance", "firetruck", "limo",
-        "cybertruck", "tractor", "buggy", "kart", "f1", "tank", "panzer", "apc", "bike", "motorcycle"
+        "cybertruck", "tractor", "buggy", "kart", "f1", "tank", "panzer", "apc", "bike", "motorcycle", "excavator", "bulldozer"
     )) or any(w in wtoks for w in ("automobile", "motor vehicle", "sports car", "armored fighting vehicle")):
-        is_tank = any(w in ptoks for w in ("tank", "panzer", "apc"))
+        is_tank = any(w in ptoks for w in ("tank", "panzer", "apc", "excavator", "bulldozer"))
         is_truck = any(w in ptoks for w in ("truck", "pickup", "suv", "jeep", "firetruck", "van", "bus", "ambulance"))
-        body_c = c_main or ("#4d7c0f" if is_tank else ("#eab308" if "taxi" in ptoks else ("#1e3a8a" if "police" in prompt else "#dc2626")))
+        body_c = c_main or ("#4d7c0f" if is_tank else ("#eab308" if "taxi" in ptoks or "excavator" in ptoks else ("#1e3a8a" if "police" in prompt else "#dc2626")))
         trim_c = c_sec or "#1e293b"
         W, H, L = (2.8 if is_tank else 2.4) * jw, (0.95 if is_truck or is_tank else 0.68) * jh, 5.2 * jl
 
@@ -440,7 +434,7 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
         return {"category": "vehicle", "riggable": True, "parts": parts}, "Vehicle Engineering Modeler"
 
     # ---------------------------------------------------------------------
-    # DOMAIN C: AIRCRAFT & SPACECRAFT (Planes, Jets, Helicopters, UFOs, Rockets)
+    # DOMAIN C: AIRCRAFT & SPACECRAFT
     # ---------------------------------------------------------------------
     if any(w in ptoks for w in (
         "plane", "airplane", "jet", "fighterjet", "biplane", "airliner", "spaceship",
@@ -476,19 +470,19 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
         return {"category": "aircraft", "riggable": True, "parts": parts}, "Aerospace 3D Modeler"
 
     # ---------------------------------------------------------------------
-    # DOMAIN D: FELINES & CARNIVORES (Cats, Lions, Tigers, Wolves, Dogs, Foxes, Bears, Pandas)
+    # DOMAIN D: FELINES & SMALL/MEDIUM MAMMALS
     # ---------------------------------------------------------------------
     if any(w in ptoks for w in (
         "cat", "kitten", "kitty", "lion", "tiger", "panther", "leopard", "cheetah", "jaguar", "lynx",
         "dog", "puppy", "wolf", "fox", "husky", "corgi", "hound", "bear", "panda", "polarbear",
-        "rabbit", "bunny", "mouse", "rat", "squirrel", "raccoon", "otter", "capybara", "hamster"
+        "rabbit", "bunny", "mouse", "rat", "squirrel", "raccoon", "otter", "capybara", "hamster", "pikachu"
     )) or any(w in wtoks for w in ("felidae", "feline", "canidae", "canine", "carnivora", "ursidae", "rodent")):
         is_feline = any(w in wtoks for w in ("cat", "kitten", "kitty", "lion", "tiger", "panther", "leopard", "cheetah", "felidae", "feline"))
         is_bear = any(w in ptoks for w in ("bear", "panda", "polarbear", "grizzly"))
-        is_rabbit = any(w in ptoks for w in ("rabbit", "bunny", "hare"))
+        is_rabbit = any(w in ptoks for w in ("rabbit", "bunny", "hare", "pikachu"))
         sc = 1.45 if any(w in ptoks for w in ("lion", "tiger", "bear", "panda", "polarbear")) else 1.0
 
-        default_fur = "#d97706" if "tiger" in ptoks else ("#eab308" if "lion" in ptoks else ("#f8fafc" if "polarbear" in ptoks or "panda" in ptoks or "rabbit" in ptoks else ("#78350f" if is_bear else ("#ea580c" if "fox" in ptoks else "#e07a2e"))))
+        default_fur = "#facc15" if "pikachu" in ptoks else ("#d97706" if "tiger" in ptoks else ("#eab308" if "lion" in ptoks else ("#f8fafc" if "polarbear" in ptoks or "panda" in ptoks or "rabbit" in ptoks else ("#78350f" if is_bear else ("#ea580c" if "fox" in ptoks else "#e07a2e")))))
         fur = c_main or default_fur
         sec_fur = c_sec or ("#1e293b" if "panda" in ptoks else ("#fef3c7" if fur not in ("#1e293b", "#f8fafc") else "#cbd5e1"))
         nose_c = "#f472b6" if (is_feline or is_rabbit) else "#1e293b"
@@ -535,7 +529,7 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
         return {"category": "animal", "riggable": True, "parts": parts}, "Mammalian Anatomical Modeler"
 
     # ---------------------------------------------------------------------
-    # DOMAIN E: UNGULATES, HERBIVORES & DINOSAURS (Horses, Unicorns, Deer, Cows, T-Rex, Triceratops)
+    # DOMAIN E: UNGULATES, HERBIVORES & DINOSAURS
     # ---------------------------------------------------------------------
     if any(w in ptoks for w in (
         "horse", "unicorn", "pegasus", "zebra", "donkey", "cow", "bull", "bison", "goat", "sheep",
@@ -598,7 +592,7 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
         return {"category": "animal", "riggable": True, "parts": parts}, "Avian & Draconic Modeler"
 
     # ---------------------------------------------------------------------
-    # DOMAIN G: MARINE & CEPHALOPODS (Octopus, Kraken, Sharks, Whales, Fish, Crabs)
+    # DOMAIN G: MARINE & CEPHALOPODS
     # ---------------------------------------------------------------------
     if any(w in ptoks for w in (
         "octopus", "kraken", "squid", "cthulhu", "jellyfish", "whale", "beluga", "shark",
@@ -631,7 +625,7 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
             return {"category": "animal", "riggable": True, "parts": parts}, "Marine Modeler"
 
     # ---------------------------------------------------------------------
-    # DOMAIN H: WEAPONS & COMBAT GEAR (Swords, Axes, Hammers, Guns, Rifles, Blasters, Shields)
+    # DOMAIN H: WEAPONS & COMBAT GEAR
     # ---------------------------------------------------------------------
     if any(w in ptoks for w in (
         "sword", "mastersword", "katana", "blade", "dagger", "claymore", "rapier", "scimitar",
@@ -670,7 +664,7 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
         return {"category": "weapon", "riggable": False, "parts": parts}, "Weaponry 3D Modeler"
 
     # ---------------------------------------------------------------------
-    # DOMAIN I: FOLIAGE & NATURE (Trees, Pines, Palms, Cacti, Mushrooms, Flowers)
+    # DOMAIN I: FOLIAGE & NATURE
     # ---------------------------------------------------------------------
     if any(w in ptoks for w in (
         "tree", "pine", "oak", "palm", "sakura", "cherryblossom", "cactus", "bush", "plant", "flower", "rose", "mushroom", "toadstool"
@@ -700,13 +694,23 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
         return {"category": "foliage", "riggable": False, "parts": parts}, "Botanical 3D Modeler"
 
     # ---------------------------------------------------------------------
-    # DOMAIN J: FURNITURE, ELECTRONICS & PROPS (Chairs, Tables, Beds, PCs, Chests, Burgers)
+    # DOMAIN J: FURNITURE, ELECTRONICS & PROPS
     # ---------------------------------------------------------------------
     if any(w in ptoks for w in (
         "chair", "throne", "sofa", "couch", "table", "desk", "bed", "chest", "treasure", "crate",
         "barrel", "lamp", "lantern", "tv", "monitor", "computer", "pc", "laptop", "arcade",
-        "burger", "hamburger", "pizza", "cake", "potion", "trophy", "chalice", "guitar", "piano"
-    )) or any(w in wtoks for w in ("furniture", "appliance", "food", "dish", "sandwich", "beverage", "instrument")):
+        "burger", "hamburger", "pizza", "cake", "potion", "trophy", "chalice", "guitar", "piano", "snowman"
+    )) or any(w in wtoks for w in ("furniture", "appliance", "food", "dish", "sandwich", "beverage", "instrument", "container")):
+        if "snowman" in ptoks:
+            P("BaseSnowball", None, "raw", "sphere", (2.6 * jw, 2.2 * jh, 2.6 * jl), "center", c="#f8fafc")
+            P("MidSnowball", "BaseSnowball", "shape", "sphere", (2.0 * jw, 1.7 * jh, 2.0 * jl), "top", u=0, v=0, inset=0.35, c="#f8fafc")
+            P("HeadSnowball", "MidSnowball", "shape", "sphere", (1.4 * jw, 1.3 * jh, 1.4 * jl), "top", u=0, v=0, inset=0.25, c="#f8fafc", joint=True)
+            P("CarrotNose", "HeadSnowball", "detail", "cone", (0.24, 0.75, 0.24), "front", u=0, v=0, inset=0.05, ro=(-90, 0, 0), c="#ea580c")
+            P("CoalEyeR", "HeadSnowball", "detail", "sphere", (0.18, 0.18, 0.12), "front", u=0.35, v=0.25, inset=0.02, c="#0f172a", mirror=True)
+            P("TopHatBrim", "HeadSnowball", "detail", "cylinder", (1.5, 0.14, 1.5), "top", u=0, v=0, inset=0.1, c="#1e293b")
+            P("TopHatCrown", "TopHatBrim", "detail", "cylinder", (1.05, 0.95, 1.05), "top", u=0, v=0, inset=0.02, c="#1e293b")
+            P("BranchArmR", "MidSnowball", "detail", "cylinder", (0.16, 1.65, 0.16), "right", u=0, v=0.15, inset=0.1, ro=(0, 0, 65), c="#78350f", mat="Wood", mirror=True)
+            return {"category": "prop", "riggable": True, "parts": parts}, "Prop & Character Modeler"
         if any(w in ptoks for w in ("burger", "hamburger", "sandwich", "cake", "pie", "pizza")):
             P("BottomBun", None, "raw", "cylinder", (2.6 * jw, 0.55, 2.6 * jl), "center", c="#d97706")
             P("MeatPatty", "BottomBun", "shape", "cylinder", (2.75 * jw, 0.52, 2.75 * jl), "top", u=0, v=0, inset=0.03, c="#5c2808", mat="Slate")
@@ -724,7 +728,6 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
             for vz, zt in ((-0.82, "F"), (0.82, "B")):
                 P(f"Leg{zt}R", "TableTop", "shape", "cylinder", (0.28, 1.85 * jh, 0.28), "bot", u=0.82, v=vz, inset=0.04, c="#1e293b", mat="Metal", mirror=True)
         else:
-            # Throne / Chair / Chest
             c_wood = c_main or "#78350f"
             P("SeatCushion", None, "raw", "box", (2.1 * jw, 0.36, 2.0 * jl), "center", c=c_wood, mat="Wood")
             P("Backrest", "SeatCushion", "shape", "box", (2.1 * jw, 2.3 * jh, 0.34), "back", u=0, v=0.85, inset=0.04, c=c_wood, mat="Wood")
@@ -734,7 +737,7 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
         return {"category": "prop", "riggable": False, "parts": parts}, "Prop & Industrial Modeler"
 
     # ---------------------------------------------------------------------
-    # DOMAIN K: HUMANOIDS, HEROES, ROBOTS & MECHS (Default Character Solver)
+    # DOMAIN K: HUMANOIDS, HEROES, ROBOTS & MECHS
     # ---------------------------------------------------------------------
     is_mech = any(w in ptoks for w in ("mech", "mecha", "gundam", "robot", "cyborg", "exosuit", "golem", "titan"))
     is_astro = any(w in ptoks for w in ("astronaut", "spaceman", "cosmonaut"))
@@ -788,7 +791,6 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
 
 # =========================================================================
 # 5. STAGE 6: SURFACE SOCKET COMPILER + 3D BOUNDING-BOX CRITIC & REPAIR LOOP
-#    ("checks details placements pass, details wrong = work on it again")
 # =========================================================================
 def compile_and_repair_3d_model(bp, scale=1.0):
     raw_list = bp.get("parts") or []
@@ -802,7 +804,6 @@ def compile_and_repair_3d_model(bp, scale=1.0):
             n = (raw_n[:-1] + "L") if raw_n.endswith("R") else (raw_n + "L")
         else:
             n = raw_n
-        # Ensure unique name
         base_n = n; cnt = 2
         while n in idx:
             n = f"{base_n}{cnt}"; cnt += 1
@@ -843,7 +844,6 @@ def compile_and_repair_3d_model(bp, scale=1.0):
             pw, ph, pd = rot_dims(par["sz"], par["ro"])
             cw, ch, cd = rot_dims(sz, ro)
 
-            # Proportion Sanity Check: clamp oversized detail children relative to parent
             if item.get("stage") == "detail" and cw > pw * 2.2 and ch > ph * 2.2:
                 sz = [round(sz[0] * 0.5, 3), round(sz[1] * 0.5, 3), round(sz[2] * 0.5, 3)]
                 cw, ch, cd = rot_dims(sz, ro)
@@ -892,9 +892,6 @@ def compile_and_repair_3d_model(bp, scale=1.0):
             if item.get("mirror"):
                 emit_part(item, is_mirror=True)
 
-    # ---------------------------------------------------------------------
-    # ITERATIVE 3D AABB CRITIC LOOP (Up to 5 Self-Repair Iterations)
-    # ---------------------------------------------------------------------
     total_repairs = 0
     for iteration in range(1, 6):
         fixes_this_pass = 0
@@ -907,7 +904,6 @@ def compile_and_repair_3d_model(bp, scale=1.0):
             cx, cy, cz = p["po"]
             cw, ch, cd = rot_dims(p["sz"], p["ro"])
 
-            # 1. Floating Check: Euclidean distance between child AABB and parent AABB
             dx = max(0.0, abs(cx - px) - (pw / 2.0 + cw / 2.0))
             dy = max(0.0, abs(cy - py) - (ph / 2.0 + ch / 2.0))
             dz = max(0.0, abs(cz - pz) - (pd / 2.0 + cd / 2.0))
@@ -920,7 +916,6 @@ def compile_and_repair_3d_model(bp, scale=1.0):
                 fixes_this_pass += 1
                 total_repairs += 1
 
-            # 2. Buried Detail Check: If a detail is 100% swallowed inside parent volume
             in_x = (abs(cx - px) + cw / 2.0) < (pw / 2.0 - 0.01)
             in_y = (abs(cy - py) + ch / 2.0) < (ph / 2.0 - 0.01)
             in_z = (abs(cz - pz) + cd / 2.0) < (pd / 2.0 - 0.01)
@@ -945,7 +940,6 @@ def compile_and_repair_3d_model(bp, scale=1.0):
                 "msg": f"Pass #{iteration}: Found {fixes_this_pass} misaligned/floating details -> re-solved surface coordinates"
             })
 
-    # Ground entire assembly so lowest point rests at Y = 0.00
     if compiled:
         min_y = min(p["po"][1] - rot_dims(p["sz"], p["ro"])[1] / 2.0 for p in compiled)
         for p in compiled:
@@ -1079,17 +1073,14 @@ def run_autonomous_pipeline(prompt, seed=7, api_key=""):
     t0 = time.time()
     logs = []
 
-    # Stage 1: Check Prompt
     subject, wiki_summary = search_internet_knowledge(prompt)
     logs.append({"stage": "1_check_prompt", "msg": f"Analyzed prompt '{prompt}' -> Primary subject: '{subject}'"})
 
-    # Stage 2: Internet Search
     if wiki_summary:
         logs.append({"stage": "2_internet_search", "msg": f"Wikipedia Lookup: {wiki_summary[:140]}..."})
     else:
         logs.append({"stage": "2_internet_search", "msg": f"Direct semantic features extracted for '{subject}'"})
 
-    # Stage 3, 4, 5: Cloud AI LLM Architect OR Wikipedia-Driven Compositional Modeler
     bp, engine_used = call_cloud_llm_architect(prompt, wiki_summary, seed, api_key=api_key)
     if not bp:
         bp, engine_used = synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed)
@@ -1101,15 +1092,12 @@ def run_autonomous_pipeline(prompt, seed=7, api_key=""):
     logs.append({"stage": "4_shape_sculpting", "msg": f"Sculpted {shp_cnt} structural/anatomical shapes"})
     logs.append({"stage": "5_detail_pass", "msg": f"Added {det_cnt} surface-socketed details"})
 
-    # Stage 6: Check Detail Placements & Iterative Rework Loop
     compiled, critic_logs, repairs = compile_and_repair_3d_model(bp, scale=1.0)
     logs.extend(critic_logs)
 
-    # Stage 7: Color & Material Verification
     mats_used = sorted({p.get("mat", "SmoothPlastic") for p in compiled})
     logs.append({"stage": "7_color_and_materials", "msg": f"Applied realistic hex palette & Roblox materials ({', '.join(mats_used)})"})
 
-    # Stage 8: Final QA Gate
     bounds = compute_bounds(compiled)
     logs.append({"stage": "8_final_model_check", "msg": f"Final QA PASS: {len(compiled)} parts grounded at Y=0.00 ({bounds[0]}×{bounds[1]}×{bounds[2]} studs)"})
 
@@ -1133,19 +1121,17 @@ def run_autonomous_pipeline(prompt, seed=7, api_key=""):
         }
     }
 
-    # Stage 9: Package into Rigged Luau + .OBJ
     spec["lua"] = export_roblox_lua(spec)
     spec["obj"] = export_obj(spec)
     logs.append({"stage": "9_package_deploy", "msg": f"Packaged LUA ({len(spec['lua'])} chars, Motor6D={spec['meta']['riggable']}) + Wavefront .OBJ"})
     return spec
 
-# Compatibility exports in case any external test imports server/brain functions
 def build_one(prompt, seed=7, var=0, feat=None):
     spec = run_autonomous_pipeline(prompt, seed=seed)
     return spec, {"root": spec["archetype"]}
 
 def generate(body, mem=None):
-    prompt = (body.get("prompt") or "make me a cat").strip()
+    prompt = (body.get("prompt") or "orange tabby cat").strip()
     it = int(body.get("iteration", 0))
     nonce = str(body.get("nonce") or time.time())
     api_key = str(body.get("api_key") or "").strip()
@@ -1153,7 +1139,7 @@ def generate(body, mem=None):
     return run_autonomous_pipeline(prompt, seed=seed, api_key=api_key)
 
 # =========================================================================
-# 8. INTERACTIVE 3D STUDIO WEB UI (Three.js + Stage Switcher + Optional Key Input)
+# 8. INTERACTIVE 3D STUDIO WEB UI
 # =========================================================================
 HTML_UI = r"""<!DOCTYPE html>
 <html lang="en">
