@@ -1,6 +1,6 @@
-"""BrickForge AI v7 — human-readable characters + vehicle bodies + test API.
-Skin/shirt/pants roles, human proportions, 5 car bodies + vehicle mods,
-build_one()/structural_checks() for the local 10k-test harness."""
+"""BrickForge AI v7.1 — fail-safe build pipeline.
+v7: skin/shirt/pants roles, human proportions, 5 car bodies, test API.
+v7.1: root tie-break, partial-build resilience, guaranteed fallback spec."""
 import math, random, re, colorsys, zlib, time
 from collections import Counter
 BUDGET = 7.0
@@ -8,7 +8,7 @@ ROOTS = {
  "humanoid": ["human","humans","man","woman","boy","girl","guy","dude","person","people","hero",
    "villain","wizard","mage","knight","soldier","ninja","pirate","doctor","teacher","driver",
    "engineer","chef","pilot","astronaut","farmer","builder","artist","musician","athlete",
-   "boxer","karate","fighter","guard","police","thief","robot","cyborg","android","mech","alien",
+   "boxer","karate","fighter","guard","thief","robot","cyborg","android","mech","alien",
    "anime","character","avatar","kid","child"],
  "octopus": ["octopus","squid","kraken","cephalopod","ink"],
  "serpent": ["snake","serpent","dragon","wyrm","eel","viper","wyvern","cobra"],
@@ -19,7 +19,7 @@ ROOTS = {
  "golem": ["golem","titan","colossus","elemental","construct"],
  "turtle": ["turtle","tortoise","snail"],
  "jelly": ["jelly","jellyfish","medusa","blob","slime"],
- "car": ["car","vehicle","auto","sedan","coupe","truck","van","taxi","racecar","bus"],
+ "car": ["car","vehicle","auto","sedan","coupe","truck","van","taxi","racecar","bus","police"],
  "bike": ["bike","motorcycle","scooter"],
  "boat": ["boat","ship","yacht","canoe"],
  "plane": ["plane","airplane","jet","aircraft","glider"],
@@ -47,7 +47,7 @@ MODS = {
  "pirate":{"add":"hg_tricorn","theme":"sea"},"chef":{"add":"hg_toque"},
  "driver":{"add":"hg_cap","theme":"race"},"engineer":{"add":"hg_hardhat","theme":"warn"},
  "pilot":{"add":"hg_cap","theme":"sky"},"astronaut":{"add":"hg_dome"},
- "doctor":{"add":"hg_cap"},"teacher":{"add":"hg_glasses"},"policecap":{"add":"hg_peak"},
+ "doctor":{"add":"hg_cap"},"teacher":{"add":"hg_glasses"},
  "wings":{"add":"w_big"},"horns":{"add":"h_curved"},"cape":{"add":"cape_long"},
  "spiky":{"sharp":0.9},"smooth":{"sharp":-0.6}}
 THEMES = {"gold":(45,.85,.75),"dark":(265,.25,.16),"neon":(310,1,.95),"ice":(195,.4,.92),
@@ -75,16 +75,17 @@ def parse_intent(prompt):
     raw = prompt.lower(); toks = tokenize(raw)
     I = {"root":None,"mods":[],"traits":{},"neg":set(),"colors":[],"size":1.0,"sharp":1.0,
          "pose":0,"mat":None,"float":False,"prop":{},"eyes":1.0,"palette_force":None,"var":None,
-         "carbody":None}
+         "carbody":None,"tokens":set(toks)}
     for phrase,cfg in SPECIFICS.items():
         if phrase in raw:
             I.update({k:v for k,v in cfg.items() if k!="palette"})
             I["palette_force"]=cfg.get("palette"); I["root"]=cfg.get("root",I["root"]); return I
-    best=0
+    best=0; best_root=None
     for root,keys in ROOTS.items():
         m=sum(1 for k in keys if k in toks)
-        if m>best: best=m; I["root"]=root
-    if not I["root"]: I["root"]="humanoid"
+        if m>best or (m==best and m>0 and best_root=="humanoid" and root!="humanoid"):
+            best=m; best_root=root
+    I["root"]=best_root or "humanoid"
     for mk in MODS:
         if mk in toks: I["mods"].append(mk)
     for mk in I["mods"]:
@@ -150,7 +151,7 @@ class Builder:
     def __init__(self,seed,pal,rng,sharp,scale):
         self.parts=[];self.names=set();self.pal=pal;self.rng=rng;self.sharp=sharp;self.scale=scale
         self.sz={};self.mirrored=[];self.present=set();self.counts=Counter();self.root=None
-        self.studs=0;self.var=seed%4
+        self.studs=0;self.var=seed%4;self.warn=None
     def _uniq(self,n):
         b=n;i=2
         while n in self.names: n="%s%d"%(b,i);i+=1
@@ -262,9 +263,6 @@ def add_hg_cap(B,I,r):
     B.add("CapBrim",t,"box",(1.0,.12,.6),"front",(0,-.1,-.2),(0,0,0),"C")
 def add_hg_hardhat(B,I,r): B.add("HardHat",_head(B),"box",(1.3,.45,1.3),"top",(0,.05,0),(0,0,0),"C")
 def add_hg_dome(B,I,r): B.add("Dome",_head(B),"gem",(1.5,1.5,1.5),None,(0,.1,0),(0,0,0),"L")
-def add_hg_peak(B,I,r):
-    t=B.add("PeakTop",_head(B),"box",(1.15,.3,1.15),"top")
-    B.add("PeakBrim",t,"box",(1.05,.1,.55),"front",(0,-.12,-.15),(0,0,0),"D")
 def add_hg_glasses(B,I,r): B.add("Glasses",_head(B),"box",(1.0,.22,.15),"front",(0,.12,-.05),(0,0,0),"D")
 def add_hg_headband(B,I,r): B.add("Headband",_head(B),"box",(1.25,.22,1.25),"top",(0,-.25,0),(0,0,0),"C")
 def add_hg_crystal(B,I,r):
@@ -293,7 +291,7 @@ def add_sp_spoiler(B,I,r):
     for sx in (1,-1): B.add("SpoPost%d"%sx,B.root,"box",(.15,.6,.15),"back",(sx*.8,.5,.2),(0,0,0),"D")
 ADDONS={"brow_evil":add_brow_evil,"hg_crown":add_hg_crown,"hg_pointy":add_hg_pointy,
  "hg_helmet":add_hg_helmet,"hg_mask":add_hg_mask,"hg_tricorn":add_hg_tricorn,"hg_toque":add_hg_toque,
- "hg_cap":add_hg_cap,"hg_hardhat":add_hg_hardhat,"hg_dome":add_hg_dome,"hg_peak":add_hg_peak,
+ "hg_cap":add_hg_cap,"hg_hardhat":add_hg_hardhat,"hg_dome":add_hg_dome,
  "hg_glasses":add_hg_glasses,"hg_headband":add_hg_headband,"hg_crystal":add_hg_crystal,
  "hair_spiky":add_hair_spiky,"taxi_sign":add_taxi_sign,"lightbar":add_lightbar,
  "w_big":add_w_big,"h_curved":add_h_curved,"cape_long":add_cape_long,"sp_spoiler":add_sp_spoiler}
@@ -613,24 +611,30 @@ def memory_priors(mem,prompt):
         if sim>.3 and e.get("palette"): pal=e["palette"]
     blend={k:sum(w*s[k] for w,s in styles)/bw for k in ("sharp","scale","sat","val")} if styles else None
     return acc,blend,pal,sorted(liked,reverse=True)
+def _spec_from(B,I,arch,seed,variant,pal):
+    return {"id":"m%d_%d"%(int(time.time()*1000)%100000,seed%97),"name":random.Random(seed).choice(NAME_PRE)+NAME_SUF[arch],
+      "archetype":arch,"variant":variant,"seed":seed,"sharpness":round(B.sharp,2),"scale":round(B.scale,2),
+      "palette":pal,"tags":sorted(B.present),"root":B.root,"parts":B.parts,"mirrored":B.mirrored,
+      "counts":dict(B.counts),"traits_present":sorted(B.present),
+      "meta":{"scheme":"v7.1","mods":I["mods"],"prompt":I.get("_prompt",""),"warn":B.warn}}
 def _build(I,arch,seed,feat,variant):
     rng=random.Random(seed);pal=synthesize_palette(I,rng)
     if feat.get("colors") and not I["palette_force"]:
         fc=feat["colors"];pal["A"]=fc[0];pal["B"]=fc[min(1,len(fc)-1)];pal["C"]=fc[min(2,len(fc)-1)]
         pal["S"]=fc[min(3,len(fc)-1)]
     B=Builder(seed,pal,rng,I["sharp"],I["size"]);B.var=variant
-    BUILDERS[arch](B,I,rng)
-    for t in list(I["traits"]):
-        fn=ADDONS.get(t)
-        if fn and t not in I["neg"]:
-            fn(B,I,rng); B.tag(t)
+    try:
+        BUILDERS[arch](B,I,rng)
+        for t in list(I["traits"]):
+            fn=ADDONS.get(t)
+            if fn and t not in I["neg"]: fn(B,I,rng); B.tag(t)
+    except Exception as e:
+        B.warn=repr(e)
+        if not B.parts: raise
+    if not B.parts: raise RuntimeError("empty build for "+arch)
     if not I["float"]: ground(B)
     pose_wrap(B,I["pose"],I["float"])
-    return {"id":"m%d_%d"%(int(time.time()*1000)%100000,seed%97),"name":rng.choice(NAME_PRE)+NAME_SUF[arch],
-      "archetype":arch,"variant":variant,"seed":seed,"sharpness":round(B.sharp,2),"scale":round(B.scale,2),
-      "palette":pal,"tags":sorted(B.present),"root":B.root,"parts":B.parts,"mirrored":B.mirrored,
-      "counts":dict(B.counts),"traits_present":sorted(B.present),
-      "meta":{"scheme":"v7","mods":I["mods"],"prompt":I.get("_prompt","")}}
+    return _spec_from(B,I,arch,seed,variant,pal)
 def build_one(prompt,seed=7,var=0,feat=None):
     I=parse_intent(prompt);I["_prompt"]=prompt
     return _build(I,I["root"],seed,feat or {},var),I
@@ -648,8 +652,7 @@ def structural_checks(spec,I):
     out.append(("grounded",abs(my)<.45 if not I["float"] else my>1.0))
     out.append(("budget",len(P)<=BUDGETS.get(spec["archetype"],90)*1.7))
     out.append(("palette_hex",all(re.fullmatch(r"#[0-9a-f]{6}",c) for c in spec["palette"].values())))
-    mok=all((a in idx and b in idx) for a,b in spec["mirrored"])
-    out.append(("mirror_ok",mok))
+    out.append(("mirror_ok",all((a in idx and b in idx) for a,b in spec["mirrored"])))
     tags=set(spec["traits_present"])
     out.append(("traits_applied",all(t in tags for t in I["traits"] if t in ADDONS)))
     out.append(("neg_absent",not any(t in tags for t in I["neg"])))
@@ -699,6 +702,10 @@ def generate(body,mem):
             s2,r2=critique(cand,I3);cand["score"]=s2;cand["report"]=r2;tried+=1
             if s2>best["score"]: best=cand
     if best is None:
-        best=_build(I,"humanoid",1,feat,0);best["score"],best["report"]=critique(best,I);tried=1
+        I4=dict(I);I4["traits"]={};I4["float"]=False;I4["pose"]=0
+        best=_build(I4,"humanoid",1,feat,0)
+        best["score"],best["report"]=critique(best,I4)
+        best["meta"]["error"]="all candidates failed — fallback humanoid"
+        tried=1
     best["meta"].update({"beam":K,"tried":tried,"iteration":it,"seconds":round(time.time()-t0,2)})
     return best
