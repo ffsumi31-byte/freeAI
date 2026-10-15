@@ -1,27 +1,38 @@
-"""Roblox Cloud 3D Modeler AI — Live LLM Architect + Wikipedia Research + 3D AABB Critic.
-Single-file deployment for Render (`python server.py`). Zero pip dependencies."""
+"""Roblox Cloud 3D Modeler AI — v5 (19-Domain Anatomical & Architectural Engine + Live LLM Architect).
+Single-file deployment for Render (`python server.py`). Zero external pip dependencies."""
 
-import os, sys, json, time, math, random, re, zlib, urllib.request, urllib.parse
+import os, sys, json, time, math, random, re, zlib, urllib.request, urllib.parse, urllib.error
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
 # =========================================================================
-# 1. COLOR & GEOMETRY PRIMITIVES
+# 1. COLOR PALETTE & GEOMETRY HELPERS
 # =========================================================================
 NAMED_COLORS = {
     "red": "#dc2626", "crimson": "#991b1b", "scarlet": "#ef4444", "maroon": "#7f1d1d",
     "orange": "#ea580c", "ginger": "#d97706", "amber": "#f59e0b", "peach": "#fdba74",
     "yellow": "#eab308", "gold": "#d4af37", "golden": "#d4af37", "lemon": "#facc15",
     "lime": "#65a30d", "green": "#16a34a", "emerald": "#10b981", "forest": "#166534",
-    "mint": "#6ee7b7", "teal": "#0d9488", "cyan": "#06b6d4", "aqua": "#22d3ee",
-    "sky": "#38bdf8", "blue": "#2563eb", "cobalt": "#1d4ed8", "navy": "#1e3a8a",
-    "indigo": "#4f46e5", "purple": "#7c3aed", "violet": "#8b5cf6", "lavender": "#c4b5fd",
-    "magenta": "#db2777", "pink": "#f472b6", "rose": "#fb7185", "white": "#f8fafc",
-    "snow": "#ffffff", "cream": "#fef3c7", "ivory": "#fffbeb", "silver": "#cbd5e1",
-    "grey": "#64748b", "gray": "#64748b", "slate": "#475569", "charcoal": "#334155",
-    "black": "#1e293b", "obsidian": "#090d16", "dark": "#0f172a", "brown": "#78350f",
-    "chocolate": "#5c2808", "tan": "#d6b88a", "beige": "#e5d3b3", "sand": "#fde68a",
-    "bronze": "#92400e", "copper": "#b45309", "brass": "#ca8a04"
+    "olive": "#4d7c0f", "mint": "#6ee7b7", "teal": "#0d9488", "cyan": "#06b6d4",
+    "aqua": "#22d3ee", "sky": "#38bdf8", "blue": "#2563eb", "cobalt": "#1d4ed8",
+    "navy": "#1e3a8a", "indigo": "#4f46e5", "purple": "#7c3aed", "violet": "#8b5cf6",
+    "lavender": "#c4b5fd", "magenta": "#db2777", "pink": "#f472b6", "rose": "#fb7185",
+    "white": "#f8fafc", "snow": "#ffffff", "cream": "#fef3c7", "ivory": "#fffbeb",
+    "silver": "#cbd5e1", "grey": "#64748b", "gray": "#64748b", "slate": "#475569",
+    "charcoal": "#334155", "black": "#1e293b", "obsidian": "#090d16", "dark": "#0f172a",
+    "brown": "#78350f", "chocolate": "#5c2808", "tan": "#d6b88a", "beige": "#e5d3b3",
+    "sand": "#fde68a", "bronze": "#92400e", "copper": "#b45309", "brass": "#ca8a04"
+}
+
+SCALE_WORDS = {
+    "tiny": 0.55, "mini": 0.65, "small": 0.78, "little": 0.82, "baby": 0.72,
+    "big": 1.25, "large": 1.28, "tall": 1.25, "huge": 1.45, "giant": 1.65,
+    "massive": 1.60, "colossal": 1.75, "mega": 1.55
 }
 
 FACES = {
@@ -56,7 +67,6 @@ def tokens_of(p):
     return stems
 
 def rot_dims(sz, ro):
-    """Calculates axis-aligned bounding box [w, h, d] of a rotated primitive."""
     w, h, d = float(sz[0]), float(sz[1]), float(sz[2])
     rx, ry, rz = [math.radians(float(a)) for a in (ro or [0, 0, 0])]
     cx, sx = abs(math.cos(rx)), abs(math.sin(rx))
@@ -78,17 +88,22 @@ def extract_prompt_colors(prompt, wiki_text=""):
                 found.append(NAMED_COLORS[w])
     return found
 
+def extract_scale_factor(prompt):
+    sc = 1.0
+    for w in tokenize(prompt):
+        if w in SCALE_WORDS:
+            sc *= SCALE_WORDS[w]
+    return clamp(sc, 0.45, 2.2)
+
 # =========================================================================
-# 2. STAGE 1 & 2: PROMPT ANALYSIS & LIVE WIKIPEDIA INTERNET SEARCH
+# 2. STAGE 1 & 2: PROMPT ANALYSIS & WIKIPEDIA RESEARCH
 # =========================================================================
 _WIKI_CACHE = {}
 
 def search_internet_knowledge(prompt):
-    """Searches Wikipedia REST + Query APIs to learn what unknown subjects look like."""
     content_words = [
         w for w in tokenize(prompt)
-        if w not in STOP_WORDS and w not in NAMED_COLORS
-        and w not in {"big", "small", "tiny", "huge", "giant", "cute", "evil", "flying", "floating"}
+        if w not in STOP_WORDS and w not in NAMED_COLORS and w not in SCALE_WORDS
     ]
     subject = " ".join(content_words[-2:]) if len(content_words) >= 2 else (content_words[-1] if content_words else "object")
     head_noun = content_words[-1] if content_words else "object"
@@ -96,10 +111,10 @@ def search_internet_knowledge(prompt):
     if subject in _WIKI_CACHE:
         return head_noun, _WIKI_CACHE[subject]
 
-    headers = {"User-Agent": "RobloxCloud3DModeler/4.1 (https://onrender.com)"}
+    headers = {"User-Agent": BROWSER_UA}
     summary_text = ""
 
-    for query_term in (subject, head_noun):
+    for query_term in (head_noun, subject):
         if not query_term:
             continue
         url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(query_term.replace(" ", "_"))
@@ -131,13 +146,13 @@ def search_internet_knowledge(prompt):
     return head_noun, summary_text
 
 # =========================================================================
-# 3. LIVE CLOUD AI LLM ARCHITECT (Keyless Pollinations + Optional Gemini/Groq/OpenAI)
+# 3. LIVE CLOUD AI LLM ARCHITECT (Groq / Gemini / OpenAI / Pollinations)
 # =========================================================================
 LLM_SYSTEM_INSTRUCTIONS = """You are an autonomous 3D Modeler AI for Roblox Studio.
-Build a detailed, recognizable 3D model for the user's prompt.
-Return ONLY valid JSON with this exact schema:
+Build a detailed, anatomically and structurally accurate 3D model for the user's prompt.
+Return ONLY valid JSON matching this schema:
 {
-  "category": "animal|humanoid|building|vehicle|aircraft|watercraft|weapon|foliage|furniture|electronics|food|prop",
+  "category": "serpent|dragon|dinosaur|arthropod|cephalopod|marine|bird|animal|humanoid|building|vehicle|aircraft|watercraft|weapon|foliage|prop",
   "riggable": true,
   "parts": [
     {
@@ -146,27 +161,25 @@ Return ONLY valid JSON with this exact schema:
       "stage": "raw|shape|detail",
       "s": "box|sphere|cylinder|wedge|cone",
       "sz": [width_x, height_y, depth_z],
-      "attach": {"face": "top|bot|front|back|right|left|center", "u": 0.0, "v": 0.0, "inset": 0.03},
-      "ro": [0, 0, 0],
+      "po": [world_x, world_y, world_z],
+      "ro": [rot_x, rot_y, rot_z],
       "c": "#hexcolor",
       "mat": "SmoothPlastic|Metal|Neon|Glass|Wood|Slate|Brick|Cobblestone|Fabric|Grass",
       "tr": 0.0,
-      "joint": false,
+      "joint": true,
       "mirror": false
     }
   ]
 }
-STRICT 3D MODELING RULES:
-1. NO LEGO STUDS. Build smooth, stylized Roblox game assets using 16 to 45 parts.
-2. Root part MUST have `"p": null`, `"stage": "raw"`, and `"attach": {"face": "center", "u": 0, "v": 0, "inset": 0}`.
-3. Every other part MUST specify `"p": "ExistingParentName"` and attach to one of its parent's faces:
-   - `"front"` is -Z, `"back"` is +Z, `"right"` is +X, `"left"` is -X, `"top"` is +Y, `"bot"` is -Y.
-   - `"u"` (-0.9 to 0.9) offsets horizontally across that face.
-   - `"v"` (-0.9 to 0.9) offsets vertically/longitudinally across that face.
-   - `"inset"` (0.02 to 0.15) embeds the child slightly into the parent so parts NEVER float in mid-air.
-4. For left/right symmetrical parts (eyes, ears, legs, arms, wheels, wings, headlights), create ONLY the right-side part ending in `R` (e.g. `"LegFR"`, `"EyeR"`, `"WingR"`) with positive `u` or `"face": "right"`, and set `"mirror": true`.
-5. Keep parent parts that have children attached to them at rotation `"ro": [0, 0, 0]` so child face attachments stay axis-aligned.
-6. Label core body/walls as `"stage": "raw"`, limbs/roofs/wheels/wings as `"stage": "shape"`, and eyes/ears/windows/doors/trim/buttons/weapons as `"stage": "detail"`.
+CRITICAL 3D MODELING RULES:
+1. NO LEGO STUDS. Use 20 to 48 smooth Roblox primitives (`box`, `sphere`, `cylinder`, `wedge`, `cone`).
+2. Coordinate system: X = Left(-)/Right(+), Y = Up(+) starting above 0, Z = Front(-Z)/Back(+Z).
+3. You may specify world position `"po": [x, y, z]` directly for each part (or `"attach": {"face": "top|bot|front|back|right|left", "u": 0.0, "v": 0.0, "inset": 0.03}`).
+4. Every part except the root (`"p": null`) MUST reference its parent part name in `"p": "ParentName"` so the critic can verify physical contact and create Motor6D joints.
+5. For symmetrical left/right parts (legs, arms, eyes, ears, horns, wings, wheels), define ONLY the right-side part (`x > 0`, name ending in `R` like `"EyeR"`, `"LegFR"`) and set `"mirror": true`. The compiler will automatically mirror it to `-X` as `"EyeL"`, `"LegFL"`.
+6. Match the true anatomy of the creature or object:
+   - Serpents/snakes have 0 legs and a multi-segment sinusoidal body (`Seg1`..`Seg12`), raised neck, head, open jaws, fangs, and forked tongue.
+   - Spiders have 8 legs; scorpions have pincers and a curved stinger tail; birds/dragons have wings; buildings have multi-story walls, recessed glass windows, doors, and roofs.
 7. Output ONLY the raw JSON object."""
 
 def _extract_json_block(text):
@@ -179,75 +192,93 @@ def _extract_json_block(text):
         return None
     try:
         data = json.loads(m.group(0))
-        if isinstance(data, dict) and isinstance(data.get("parts"), list) and len(data["parts"]) >= 5:
+        if isinstance(data, dict) and isinstance(data.get("parts"), list) and len(data["parts"]) >= 6:
             return data
     except Exception:
         pass
     return None
 
 def call_cloud_llm_architect(prompt, wiki_summary, seed, api_key=""):
-    """Calls configured API key (Gemini/Groq/OpenAI) or keyless Cloud LLM endpoints."""
-    key = (api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GROQ_API_KEY") or os.environ.get("OPENAI_API_KEY") or "").strip()
+    key = (api_key or os.environ.get("GROQ_API_KEY") or os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY") or "").strip()
     user_request = (
-        f"Build a 3D Roblox model for: '{prompt}' (seed: {seed}).\n"
-        f"Internet Research Context: {wiki_summary or 'Use accurate real-world anatomy, architecture, and colors.'}\n"
-        "Ensure all sub-parts, proportions, and details are included and properly attached. Return ONLY JSON."
+        f"Build a detailed 3D Roblox model for prompt: '{prompt}' (variation seed: {seed}).\n"
+        f"Wikipedia Research: {wiki_summary or 'Use accurate real-world anatomy and structure.'}\n"
+        "Return ONLY valid JSON."
     )
+    err_notes = []
 
-    # 1. Gemini API key (AIza...)
+    # 1. Gemini API Key (AIza...)
     if key.startswith("AIza"):
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}"
-            payload = {
-                "systemInstruction": {"parts": [{"text": LLM_SYSTEM_INSTRUCTIONS}]},
-                "contents": [{"parts": [{"text": user_request}]}],
-                "generationConfig": {"temperature": 0.35, "responseMimeType": "application/json"}
-            }
-            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=12.0) as resp:
-                res = json.loads(resp.read().decode("utf-8"))
-                txt = res["candidates"][0]["content"]["parts"][0]["text"]
-                bp = _extract_json_block(txt)
-                if bp:
-                    return bp, "Gemini 2.5 Flash AI Architect"
-        except Exception:
-            pass
+        for model_id in ("gemini-2.5-flash", "gemini-2.0-flash"):
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={key}"
+                payload = {
+                    "systemInstruction": {"parts": [{"text": LLM_SYSTEM_INSTRUCTIONS}]},
+                    "contents": [{"parts": [{"text": user_request}]}],
+                    "generationConfig": {"temperature": 0.35, "responseMimeType": "application/json"}
+                }
+                req = urllib.request.Request(
+                    url, data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json", "User-Agent": BROWSER_UA},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=14.0) as resp:
+                    res = json.loads(resp.read().decode("utf-8"))
+                    txt = res["candidates"][0]["content"]["parts"][0]["text"]
+                    bp = _extract_json_block(txt)
+                    if bp:
+                        return bp, f"Gemini ({model_id}) AI Architect", None
+            except Exception as e:
+                err_notes.append(f"Gemini {model_id}: {str(e)[:60]}")
 
-    # 2. Groq (gsk_...) or OpenAI (sk-...) key
+    # 2. Groq (gsk_...) or OpenAI (sk-...) API Key
     if key.startswith("gsk_") or key.startswith("sk-"):
-        try:
-            is_groq = key.startswith("gsk_")
-            url = "https://api.groq.com/openai/v1/chat/completions" if is_groq else "https://api.openai.com/v1/chat/completions"
-            model = "llama-3.3-70b-versatile" if is_groq else "gpt-4o-mini"
-            payload = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": LLM_SYSTEM_INSTRUCTIONS},
-                    {"role": "user", "content": user_request}
-                ],
-                "temperature": 0.3,
-                "response_format": {"type": "json_object"}
-            }
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}", "User-Agent": "RobloxCloud3D/4.1"},
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=12.0) as resp:
-                res = json.loads(resp.read().decode("utf-8"))
-                txt = res["choices"][0]["message"]["content"]
-                bp = _extract_json_block(txt)
-                if bp:
-                    return bp, f"{'Groq Llama-3.3-70B' if is_groq else 'OpenAI'} AI Architect"
-        except Exception:
-            pass
+        is_groq = key.startswith("gsk_")
+        url = "https://api.groq.com/openai/v1/chat/completions" if is_groq else "https://api.openai.com/v1/chat/completions"
+        models = ("llama-3.3-70b-versatile", "llama-3.1-8b-instant") if is_groq else ("gpt-4o-mini",)
+        for model_id in models:
+            try:
+                payload = {
+                    "model": model_id,
+                    "messages": [
+                        {"role": "system", "content": LLM_SYSTEM_INSTRUCTIONS},
+                        {"role": "user", "content": user_request}
+                    ],
+                    "temperature": 0.3,
+                    "response_format": {"type": "json_object"}
+                }
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                        "Authorization": f"Bearer {key}",
+                        "User-Agent": BROWSER_UA
+                    },
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=14.0) as resp:
+                    res = json.loads(resp.read().decode("utf-8"))
+                    txt = res["choices"][0]["message"]["content"]
+                    bp = _extract_json_block(txt)
+                    if bp:
+                        return bp, f"{'Groq' if is_groq else 'OpenAI'} ({model_id}) AI Architect", None
+            except urllib.error.HTTPError as he:
+                body_err = ""
+                try:
+                    body_err = he.read().decode("utf-8")[:80]
+                except Exception:
+                    pass
+                err_notes.append(f"{model_id} HTTP {he.code}: {body_err}")
+            except Exception as e:
+                err_notes.append(f"{model_id}: {str(e)[:60]}")
 
-    # 3. Default Keyless Cloud LLM Attempt (Pollinations POST + GET fallback)
-    for model_name in ("openai", "mistral"):
+    # 3. Keyless Pollinations Cloud LLM (Only used when no custom key is provided)
+    if not key:
         try:
             payload = {
-                "model": model_name,
+                "model": "openai",
                 "messages": [
                     {"role": "system", "content": LLM_SYSTEM_INSTRUCTIONS},
                     {"role": "user", "content": user_request}
@@ -259,10 +290,10 @@ def call_cloud_llm_architect(prompt, wiki_summary, seed, api_key=""):
             req = urllib.request.Request(
                 "https://text.pollinations.ai/openai",
                 data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 RobloxCloud3D/4.1"},
+                headers={"Content-Type": "application/json", "User-Agent": BROWSER_UA},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=8.0) as resp:
+            with urllib.request.urlopen(req, timeout=6.5) as resp:
                 raw = resp.read().decode("utf-8")
                 try:
                     outer = json.loads(raw)
@@ -271,218 +302,452 @@ def call_cloud_llm_architect(prompt, wiki_summary, seed, api_key=""):
                     txt = raw
                 bp = _extract_json_block(txt)
                 if bp:
-                    return bp, f"Cloud LLM Architect ({model_name})"
-        except Exception:
-            pass
+                    return bp, "Cloud LLM Architect (Keyless)", None
+        except Exception as e:
+            err_notes.append(f"Keyless LLM: {str(e)[:50]}")
 
-    return None, None
+    return None, None, ("; ".join(err_notes) if err_notes else None)
 
 # =========================================================================
-# 4. UNIVERSAL WIKIPEDIA-DRIVEN COMPOSITIONAL 3D SYNTHESIZER
+# 4. 19-DOMAIN ANATOMICAL & ARCHITECTURAL SYNTHESIS ENGINE
+#    (Prompt-first classification so Wikipedia words never hijack the subject!)
 # =========================================================================
-def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
-    """Constructs bespoke 3D models by analyzing prompt + Wikipedia anatomy/structure."""
-    rng = random.Random(seed)
-    combined = f"{prompt} {wiki_summary}".lower()
+DOMAIN_KEYWORDS = [
+    ("serpent", {
+        "serpent", "snake", "cobra", "viper", "python", "boa", "anaconda", "rattlesnake",
+        "mamba", "wyrm", "basilisk", "hydra", "leviathan", "eel", "worm", "earthworm",
+        "caterpillar", "centipede", "millipede", "naga", "jormungandr"
+    }),
+    ("dragon", {
+        "dragon", "wyvern", "drake", "charizard", "bahamut", "smaug", "shenron"
+    }),
+    ("dinosaur", {
+        "dinosaur", "dino", "trex", "tyrannosaurus", "raptor", "velociraptor", "spinosaurus",
+        "allosaurus", "carnotaurus", "triceratops", "stegosaurus", "brachiosaurus",
+        "brontosaurus", "diplodocus", "ankylosaurus", "pterodactyl", "pterosaur"
+    }),
+    ("arthropod", {
+        "spider", "tarantula", "arachnid", "blackwidow", "scorpion", "ant", "beetle",
+        "ladybug", "scarab", "mantis", "bee", "bumblebee", "wasp", "hornet", "butterfly",
+        "moth", "dragonfly", "cockroach", "cricket", "grasshopper", "insect", "bug"
+    }),
+    ("cephalopod", {
+        "octopus", "kraken", "squid", "cuttlefish", "cthulhu", "jellyfish", "jelly", "medusa"
+    }),
+    ("marine", {
+        "shark", "megalodon", "whale", "beluga", "orca", "dolphin", "narwhal", "fish",
+        "goldfish", "koi", "salmon", "tuna", "clownfish", "piranha", "swordfish", "marlin",
+        "manta", "stingray", "seahorse", "axolotl", "turtle", "seaturtle", "tortoise",
+        "seal", "walrus", "crab", "lobster", "shrimp"
+    }),
+    ("bird", {
+        "bird", "eagle", "phoenix", "falcon", "hawk", "owl", "raven", "crow", "parrot",
+        "macaw", "cockatoo", "toucan", "duck", "swan", "goose", "chicken", "rooster",
+        "penguin", "flamingo", "peacock", "ostrich", "pelican", "seagull", "pigeon",
+        "dove", "hummingbird", "griffin", "gryphon", "harpy"
+    }),
+    ("feline", {
+        "cat", "kitten", "kitty", "tabby", "lion", "lioness", "tiger", "panther",
+        "leopard", "cheetah", "jaguar", "cougar", "puma", "lynx", "bobcat", "ocelot", "sphinx"
+    }),
+    ("canine", {
+        "dog", "puppy", "pup", "wolf", "werewolf", "direwolf", "fenrir", "fox", "kitsune",
+        "husky", "corgi", "hound", "bulldog", "poodle", "pug", "shiba", "retriever",
+        "shepherd", "dalmatian", "coyote", "jackal", "hyena", "cerberus"
+    }),
+    ("ursine_small", {
+        "bear", "grizzly", "polarbear", "panda", "koala", "rabbit", "bunny", "hare",
+        "mouse", "rat", "hamster", "squirrel", "chipmunk", "raccoon", "tanuki", "redpanda",
+        "hedgehog", "porcupine", "otter", "ferret", "badger", "skunk", "beaver", "capybara",
+        "sloth", "kangaroo", "monkey", "chimp", "gorilla", "ape", "orangutan", "yeti",
+        "bigfoot", "pikachu", "frog", "toad", "chameleon", "gecko", "lizard", "iguana"
+    }),
+    ("ungulate", {
+        "horse", "unicorn", "pegasus", "pony", "stallion", "zebra", "donkey", "mule",
+        "cow", "bull", "ox", "bison", "buffalo", "yak", "minotaur", "goat", "ibex",
+        "sheep", "lamb", "ram", "deer", "reindeer", "stag", "moose", "elk", "gazelle",
+        "antelope", "giraffe", "camel", "llama", "alpaca", "elephant", "mammoth",
+        "rhino", "rhinoceros", "hippo", "hippopotamus", "pig", "hog", "boar", "warthog",
+        "croc", "crocodile", "alligator"
+    }),
+    ("building", {
+        "building", "house", "home", "cabin", "cottage", "mansion", "villa", "shop",
+        "store", "bakery", "cafe", "restaurant", "hotel", "motel", "office", "skyscraper",
+        "tower", "castle", "fort", "fortress", "citadel", "palace", "church", "temple",
+        "cathedral", "shrine", "pagoda", "mosque", "lighthouse", "windmill", "barn",
+        "silo", "warehouse", "factory", "hospital", "school", "bank", "prison", "bunker",
+        "pyramid", "bridge", "gate", "arch", "gazebo", "igloo", "tent"
+    }),
+    ("vehicle", {
+        "car", "sportscar", "racecar", "supercar", "sedan", "coupe", "convertible",
+        "suv", "jeep", "humvee", "truck", "pickup", "semi", "lorry", "van", "minivan",
+        "bus", "schoolbus", "taxi", "policecar", "copcar", "ambulance", "firetruck",
+        "limo", "limousine", "cybertruck", "tractor", "bulldozer", "excavator", "forklift",
+        "buggy", "kart", "gokart", "f1", "formula", "tank", "panzer", "abrams", "apc",
+        "artillery", "train", "locomotive", "bullettrain", "subway", "tram", "bike",
+        "motorcycle", "motorbike", "scooter", "bicycle", "atv", "quadbike", "skateboard"
+    }),
+    ("aircraft", {
+        "plane", "airplane", "jet", "fighterjet", "bomber", "biplane", "airliner",
+        "seaplane", "glider", "spaceship", "starfighter", "xwing", "tie", "rocket",
+        "shuttle", "ufo", "saucer", "helicopter", "heli", "chopper", "gunship", "drone",
+        "quadcopter", "blimp", "airship", "zeppelin"
+    }),
+    ("watercraft", {
+        "boat", "ship", "yacht", "sailboat", "pirateship", "galleon", "battleship",
+        "destroyer", "carrier", "cruiseship", "ferry", "submarine", "sub", "canoe",
+        "kayak", "raft", "speedboat", "jetski", "vikingboat", "longship"
+    }),
+    ("weapon", {
+        "sword", "mastersword", "katana", "blade", "dagger", "knife", "claymore",
+        "broadsword", "longsword", "rapier", "scimitar", "saber", "lightsaber", "axe",
+        "battleaxe", "hatchet", "halberd", "glaive", "scythe", "sickle", "spear",
+        "lance", "pike", "trident", "hammer", "warhammer", "maul", "mace", "flail",
+        "morningstar", "club", "bat", "bow", "crossbow", "staff", "wand", "scepter",
+        "shield", "buckler", "aegis", "gun", "pistol", "revolver", "rifle", "sniper",
+        "shotgun", "smg", "minigun", "blaster", "lasergun", "raygun", "plasmagun",
+        "bazooka", "rocketlauncher", "cannon", "turret"
+    }),
+    ("foliage", {
+        "tree", "pine", "oak", "maple", "birch", "willow", "palm", "redwood", "bonsai",
+        "sakura", "cherryblossom", "cactus", "saguaro", "bamboo", "bush", "shrub",
+        "hedge", "plant", "fern", "flower", "rose", "sunflower", "tulip", "lotus",
+        "mushroom", "toadstool", "fungus", "coral", "crystal", "geode"
+    }),
+    ("prop", {
+        "chair", "throne", "stool", "bench", "sofa", "couch", "armchair", "table",
+        "desk", "workbench", "bed", "bunkbed", "bookshelf", "bookcase", "cabinet",
+        "wardrobe", "chest", "treasure", "treasurechest", "safe", "crate", "barrel",
+        "keg", "lamp", "lantern", "chandelier", "torch", "streetlight", "hydrant",
+        "mailbox", "trashcan", "dumpster", "tv", "television", "monitor", "computer",
+        "pc", "laptop", "arcade", "vendingmachine", "atm", "piano", "guitar", "drum",
+        "clock", "fountain", "well", "altar", "portal", "anvil", "furnace", "cauldron",
+        "campfire", "bonfire", "tombstone", "coffin", "snowman", "burger", "hamburger",
+        "cheeseburger", "pizza", "cake", "cupcake", "donut", "icecream", "sushi",
+        "ramen", "taco", "hotdog", "apple", "banana", "pumpkin", "potion", "elixir",
+        "chalice", "goblet", "trophy", "crown", "gift", "present"
+    }),
+    ("humanoid", {
+        "human", "man", "woman", "boy", "girl", "person", "character", "avatar", "hero",
+        "villain", "knight", "paladin", "warrior", "gladiator", "soldier", "commando",
+        "guard", "ninja", "samurai", "viking", "pirate", "cowboy", "sheriff", "wizard",
+        "mage", "sorcerer", "witch", "necromancer", "priest", "monk", "astronaut",
+        "spaceman", "cosmonaut", "pilot", "doctor", "nurse", "scientist", "chef",
+        "police", "firefighter", "builder", "engineer", "farmer", "karate", "ryu",
+        "fighter", "boxer", "archer", "ranger", "assassin", "king", "queen", "prince",
+        "princess", "emperor", "pharaoh", "santa", "clown", "vampire", "zombie",
+        "skeleton", "mummy", "ghost", "angel", "demon", "elf", "dwarf", "orc", "goblin",
+        "mech", "mecha", "gundam", "robot", "cyborg", "android", "exosuit", "golem",
+        "titan", "colossus", "transformer"
+    })
+]
+
+def classify_domain(prompt, wiki_summary=""):
     ptoks = tokens_of(prompt)
-    wtoks = tokens_of(combined)
+    # 1. Check user's explicit prompt tokens FIRST (so Wikipedia words never override!)
+    for dom, kw_set in DOMAIN_KEYWORDS:
+        if ptoks & kw_set:
+            return dom
+    # 2. Substring check on user's prompt for compound words
+    p_low = prompt.lower()
+    for dom, kw_set in DOMAIN_KEYWORDS:
+        if any(k in p_low for k in kw_set if len(k) >= 4):
+            return dom
+    # 3. Only if prompt noun is unfamiliar, check Wikipedia summary tokens in strict specificity order
+    wtoks = tokens_of(wiki_summary)
+    for dom, kw_set in DOMAIN_KEYWORDS:
+        if wtoks & kw_set:
+            return dom
+    return "humanoid"
 
-    jw = rng.uniform(0.92, 1.09)
-    jh = rng.uniform(0.92, 1.09)
-    jl = rng.uniform(0.92, 1.09)
+def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
+    rng = random.Random(seed)
+    domain = classify_domain(prompt, wiki_summary)
+    ptoks = tokens_of(prompt)
+    wtoks = tokens_of(f"{prompt} {wiki_summary}")
+    p_low = prompt.lower()
+
+    jw = rng.uniform(0.93, 1.08)
+    jh = rng.uniform(0.93, 1.08)
+    jl = rng.uniform(0.93, 1.08)
     user_cols = extract_prompt_colors(prompt, wiki_summary)
     c_main = user_cols[0] if len(user_cols) >= 1 else None
     c_sec = user_cols[1] if len(user_cols) >= 2 else None
 
     parts = []
-    def P(n, p, stage, s, sz, face="center", u=0.0, v=0.0, inset=0.03, ro=(0,0,0), c="#cccccc", mat="SmoothPlastic", tr=0.0, joint=False, mirror=False):
-        parts.append({
+    def P(n, p, stage, s, sz, face="center", u=0.0, v=0.0, inset=0.03, ro=(0,0,0), c="#cccccc", mat="SmoothPlastic", tr=0.0, joint=False, mirror=False, po=None):
+        item = {
             "n": n, "p": p, "stage": stage, "s": s,
             "sz": [round(max(0.05, float(x)), 3) for x in sz],
             "attach": {"face": face, "u": round(float(u), 3), "v": round(float(v), 3), "inset": round(float(inset), 3)},
             "ro": [round(float(x), 1) for x in ro],
             "c": c, "mat": mat, "tr": round(float(tr), 2),
             "joint": bool(joint), "mirror": bool(mirror)
-        })
+        }
+        if po is not None:
+            item["po"] = [round(float(x), 3) for x in po]
+        parts.append(item)
 
-    # ---------------------------------------------------------------------
-    # DOMAIN A: ARCHITECTURE & BUILDINGS
-    # ---------------------------------------------------------------------
-    if any(w in ptoks for w in (
-        "building", "house", "home", "cabin", "cottage", "mansion", "villa", "shop", "store",
-        "bakery", "cafe", "restaurant", "hotel", "office", "skyscraper", "tower", "castle",
-        "fort", "citadel", "palace", "church", "temple", "cathedral", "shrine", "pagoda",
-        "lighthouse", "windmill", "barn", "warehouse", "factory", "hospital", "school", "bank", "bridge", "pyramid"
-    )) or any(w in wtoks for w in ("architecture", "building", "skyscraper", "fortification", "edifice")):
-        is_castle = any(w in ptoks for w in ("castle", "fort", "citadel", "palace"))
-        is_pagoda = any(w in ptoks for w in ("pagoda", "shrine", "temple"))
-        is_sky = any(w in ptoks for w in ("skyscraper", "office", "hotel", "tower", "lighthouse", "windmill"))
-        floors = rng.randint(4, 5) if "skyscraper" in ptoks else (3 if is_sky or is_pagoda else 2)
-        w = (5.4 if is_sky else 8.2) * jw
-        d = (5.2 if is_sky else 6.4) * jl
-        fh = 2.8 * jh
-        th = floors * fh
+    # =====================================================================
+    # 1. SERPENT / SNAKE / COBRA / WYRM / LEVIATHAN (Sinusoidal S-Coil + Strike Head + Fangs)
+    # =====================================================================
+    if domain == "serpent":
+        scales_c = c_main or ("#eab308" if "cobra" in ptoks else ("#0d9488" if "leviathan" in ptoks else "#16a34a"))
+        belly_c = c_sec or "#fef08a"
+        dark_c = "#14532d" if scales_c == "#16a34a" else "#1e293b"
+        is_cobra = any(w in ptoks for w in ("cobra", "serpent", "viper", "naga", "basilisk")) or "giant" in ptoks
 
-        wall_c = c_main or ("#dc2626" if is_pagoda else ("#94a3b8" if is_castle else ("#334155" if "skyscraper" in ptoks else rng.choice(["#f1f5f9", "#fef3c7", "#e2e8f0", "#d6b88a"]))))
-        trim_c = c_sec or ("#1e293b" if wall_c != "#334155" else "#cbd5e1")
-        roof_c = "#1e293b" if not is_castle else "#2563eb"
+        # Build 15 articulated segments curving in a 3D S-wave on the ground and rising into a strike coil at the front!
+        n_segs = 15
+        prev_name = None
+        coords = []
+        for i in range(n_segs):
+            t = i / float(n_segs - 1)  # 0 = neck/front, 1 = tail tip
+            if i < 5:
+                # Raised S-curve strike neck at the front
+                s_prog = (4 - i) / 4.0  # 1 at head end, 0 at ground transition
+                wx = math.sin(i * 0.55) * 0.45 * jw
+                wy = 0.65 + s_prog * 2.85 * jh
+                wz = -3.2 + i * 0.55 * jl
+                radius = (0.98 - i * 0.03) * jw
+            else:
+                # Sinusoidal ground coils toward the tail
+                gt = (i - 4) / float(n_segs - 5)
+                wx = math.sin(gt * math.pi * 2.2) * 1.65 * jw
+                wy = 0.55 * (1.0 - gt * 0.45)
+                wz = -0.6 + gt * 5.6 * jl
+                radius = max(0.28, (0.92 * (1.0 - gt * 0.72))) * jw
+            coords.append((wx, wy, wz, radius))
 
-        P("Foundation", None, "raw", "box", (w + 1.0, 0.65, d + 1.0), "center", c=trim_c, mat="Slate")
-        P("MainWalls", "Foundation", "raw", "box", (w, th, d), "top", u=0, v=0, inset=0.02, c=wall_c, mat="Cobblestone" if is_castle else ("SmoothPlastic" if is_sky else "Brick"))
+        # Root is Seg4 (base of the neck on the ground) so the serpent is stably anchored
+        for i, (wx, wy, wz, rad) in enumerate(coords):
+            seg_name = "CoreRoot" if i == 0 else f"Seg{i}"
+            par_n = None if i == 0 else ("CoreRoot" if i == 1 else f"Seg{i-1}")
+            st_role = "raw" if i < 6 else "shape"
+            P(seg_name, par_n, st_role, "sphere", (rad * 1.15, rad * 1.05, rad * 1.35),
+              po=(wx, wy, wz), c=scales_c if i % 2 == 0 else dark_c, joint=True)
+            # Ventral belly scute under each segment
+            P(f"BellyScute{i}", seg_name, "detail", "box", (rad * 0.82, rad * 0.25, rad * 0.95),
+              face="bot", u=0, v=0, inset=0.06, c=belly_c)
+            # Dorsal spine ridge
+            if i < n_segs - 2:
+                P(f"DorsalSpike{i}", seg_name, "detail", "cone", (rad * 0.28, rad * 0.52, rad * 0.42),
+                  face="top", u=0, v=0, inset=0.05, c=belly_c if i % 2 else dark_c)
 
-        for ux, sx_tag in ((0.96, "R"), (-0.96, "L")):
-            for vz, sz_tag in ((-0.96, "F"), (0.96, "B")):
-                P(f"Pilaster{sx_tag}{sz_tag}", "MainWalls", "shape", "box", (0.48, th + 0.05, 0.48), "front" if sz_tag=="F" else "back", u=ux, v=0, inset=0.22, c=trim_c, mat="Slate")
+        # Flared Cobra / Serpent Hood on upper strike neck (CoreRoot, Seg1, Seg2)
+        if is_cobra:
+            for hi, seg_ref in enumerate(("CoreRoot", "Seg1", "Seg2")):
+                hw_s = (1.65 - hi * 0.28) * jw
+                P(f"HoodFlare{hi}R", seg_ref, "shape", "sphere", (hw_s, 0.95, 0.42),
+                  face="right", u=0, v=0, inset=0.22, c=scales_c, mirror=True)
+                P(f"HoodMark{hi}R", f"HoodFlare{hi}R", "detail", "sphere", (hw_s * 0.45, 0.45, 0.18),
+                  face="front", u=0.2, v=0, inset=0.02, c=belly_c, mirror=True)
 
-        for fl in range(1, floors + 1):
-            vn = clamp(-1.0 + (2.0 * fl / floors), -0.95, 0.98)
-            P(f"CorniceLedge{fl}", "MainWalls", "shape", "box", (w + 0.42, 0.26, d + 0.42), "front", u=0, v=vn, inset=d/2 + 0.21, c=trim_c, mat="Slate")
+        # Sculpted Serpent Head, Open Hinged Jaw, Venom Fangs & Forked Tongue
+        hx, hy, hz, hrad = coords[0]
+        P("Head", "CoreRoot", "raw", "sphere", (1.45 * jw, 1.05 * jh, 1.65 * jl),
+          po=(hx, hy + 0.55, hz - 0.75), c=scales_c, joint=True)
+        P("UpperSnout", "Head", "shape", "box", (1.12 * jw, 0.52 * jh, 0.95 * jl),
+          face="front", u=0, v=0.08, inset=0.18, c=scales_c)
+        P("LowerJaw", "Head", "shape", "box", (0.96 * jw, 0.34 * jh, 1.15 * jl),
+          face="bot", u=0, v=-0.45, inset=0.12, ro=(28, 0, 0), c=belly_c, joint=True)
 
-        if is_castle:
-            for ux, sx_t in ((0.98, "R"), (-0.98, "L")):
-                for vz, sz_t in ((-0.98, "F"), (0.98, "B")):
-                    t_name = f"CornerTower{sx_t}{sz_t}"
-                    P(t_name, "Foundation", "shape", "cylinder", (2.3, th + 1.6, 2.3), "top", u=ux, v=vz, inset=0.02, c=trim_c, mat="Cobblestone")
-                    P(f"Spire{sx_t}{sz_t}", t_name, "shape", "cone", (2.7, 2.0, 2.7), "top", u=0, v=0, inset=0.03, c=roof_c, mat="Slate")
-            for bi in range(-2, 3):
-                P(f"MerlonF{bi+2}", "MainWalls", "shape", "box", (0.65, 0.65, 0.45), "top", u=bi*0.42, v=-0.92, inset=0.02, c=trim_c, mat="Cobblestone")
-                P(f"MerlonB{bi+2}", "MainWalls", "shape", "box", (0.65, 0.65, 0.45), "top", u=bi*0.42, v=0.92, inset=0.02, c=trim_c, mat="Cobblestone")
-        elif is_pagoda:
-            par_t = "MainWalls"
-            for tier in range(3):
-                sc_t = 1.0 - tier * 0.22
-                eave = f"PagodaEave{tier}"
-                P(eave, par_t, "shape", "cone", ((w + 1.6)*sc_t, 0.9, (d + 1.6)*sc_t), "top", u=0, v=0, inset=0.03, ro=(0, 45, 0), c="#1e293b", mat="Slate")
-                if tier < 2:
-                    par_t = f"PagodaStory{tier}"
-                    P(par_t, eave, "shape", "box", (w*0.68*sc_t, 1.5, d*0.68*sc_t), "top", u=0, v=0, inset=0.25, c=wall_c, mat="Wood")
-            P("PagodaSpire", "PagodaEave2", "detail", "cylinder", (0.28, 1.6, 0.28), "top", u=0, v=0, inset=0.05, c="#d4af37", mat="Metal")
-        elif is_sky:
-            P("RoofParapet", "MainWalls", "shape", "box", (w + 0.3, 0.5, d + 0.3), "top", u=0, v=0, inset=0.02, c=trim_c, mat="Metal")
-            P("PenthouseCore", "RoofParapet", "shape", "box", (w * 0.55, 1.3, d * 0.55), "top", u=0, v=0, inset=0.02, c=trim_c, mat="Metal")
-            P("AntennaSpire", "PenthouseCore", "detail", "cylinder", (0.22, 2.4, 0.22), "top", u=0, v=0, inset=0.02, c="#cbd5e1", mat="Metal")
-            P("BeaconLight", "AntennaSpire", "detail", "sphere", (0.38, 0.38, 0.38), "top", u=0, v=0, inset=0.02, c="#ef4444", mat="Neon")
+        # Venom Fangs & Forked Red Tongue
+        P("FangR", "UpperSnout", "detail", "cone", (0.18, 0.52, 0.18),
+          face="bot", u=0.55, v=-0.45, inset=0.04, ro=(180, 0, 0), c="#ffffff", mirror=True)
+        P("Tongue", "LowerJaw", "detail", "box", (0.14, 0.08, 0.95),
+          face="front", u=0, v=0.2, inset=0.1, c="#ef4444", mat="Neon")
+        P("TongueForkR", "Tongue", "detail", "box", (0.08, 0.06, 0.45),
+          face="front", u=0.6, v=0, inset=0.04, ro=(0, -22, 0), c="#ef4444", mat="Neon", mirror=True)
+
+        # Slitted Glowing Serpent Eyes & Brow Ridges
+        P("EyeR", "Head", "detail", "sphere", (0.34, 0.32, 0.22),
+          face="right", u=-0.35, v=0.22, inset=0.05, c="#facc15", mat="Neon", mirror=True)
+        P("PupilR", "EyeR", "detail", "box", (0.08, 0.26, 0.12),
+          face="right", u=0, v=0, inset=0.01, c="#0f172a", mirror=True)
+        P("BrowRidgeR", "Head", "detail", "box", (0.28, 0.16, 0.65),
+          face="top", u=0.68, v=-0.25, inset=0.04, ro=(10, 0, -16), c=dark_c, mirror=True)
+
+        return {"category": "serpent", "riggable": True, "parts": parts}, "Serpentine Anatomical Modeler"
+
+    # =====================================================================
+    # 2. DRAGON / WYVERN / CHARIZARD (Winged Reptilian Behemoth)
+    # =====================================================================
+    if domain == "dragon":
+        scales_c = c_main or ("#ea580c" if "charizard" in ptoks else "#dc2626")
+        belly_c = c_sec or "#fde047"
+        wing_c = "#0d9488" if "charizard" in ptoks else "#991b1b"
+
+        P("Torso", None, "raw", "sphere", (2.3 * jw, 2.5 * jh, 3.0 * jl), "center", c=scales_c)
+        P("BellyPlate", "Torso", "shape", "sphere", (1.95 * jw, 2.1 * jh, 1.2), "front", u=0, v=-0.05, inset=0.45, c=belly_c)
+        P("Neck1", "Torso", "raw", "cylinder", (1.05, 1.35, 1.05), "top", u=0, v=-0.52, inset=0.2, c=scales_c, joint=True)
+        P("Neck2", "Neck1", "raw", "cylinder", (0.92, 1.25, 0.92), "top", u=0, v=-0.25, inset=0.15, c=scales_c, joint=True)
+        P("Head", "Neck2", "raw", "box", (1.25 * jw, 1.05 * jh, 1.55 * jl), "top", u=0, v=-0.35, inset=0.12, c=scales_c, joint=True)
+        P("Snout", "Head", "shape", "box", (0.95 * jw, 0.55, 1.05), "front", u=0, v=0.05, inset=0.08, c=scales_c)
+        P("LowerJaw", "Head", "shape", "box", (0.88 * jw, 0.32, 0.98), "bot", u=0, v=-0.45, inset=0.08, ro=(18, 0, 0), c=belly_c, joint=True)
+
+        P("DragonHornR", "Head", "detail", "cone", (0.32, 1.25, 0.32), "top", u=0.58, v=0.42, inset=0.06, ro=(-38, 0, -14), c="#fef3c7", mirror=True)
+        P("EyeR", "Head", "detail", "sphere", (0.28, 0.28, 0.16), "right", u=-0.32, v=0.18, inset=0.03, c="#facc15", mat="Neon", mirror=True)
+        P("FangR", "Snout", "detail", "cone", (0.16, 0.38, 0.16), "bot", u=0.55, v=-0.4, inset=0.03, ro=(180, 0, 0), c="#ffffff", mirror=True)
+
+        # Articulated Bat-Membrane Dragon Wings
+        P("WingArmR", "Torso", "shape", "box", (2.4 * jl, 0.34, 0.45), "right", u=-0.15, v=0.45, inset=0.15, ro=(0, 0, 28), c=scales_c, joint=True, mirror=True)
+        P("WingMembrane1R", "WingArmR", "shape", "box", (2.3 * jl, 0.12, 1.65), "back", u=0, v=0, inset=0.08, c=wing_c, mirror=True)
+        P("WingOuterR", "WingArmR", "shape", "box", (2.1 * jl, 0.26, 0.36), "right", u=0, v=0, inset=0.08, ro=(0, 0, -18), c=scales_c, joint=True, mirror=True)
+        P("WingMembrane2R", "WingOuterR", "detail", "wedge", (2.0 * jl, 0.10, 1.45), "back", u=0, v=0, inset=0.06, c=wing_c, mirror=True)
+
+        # Muscular Hind Legs, Forearms & Long Spiked Flame Tail
+        P("ArmR", "Torso", "shape", "box", (0.58, 1.35, 0.58), "right", u=-0.55, v=0.15, inset=0.08, c=scales_c, joint=True, mirror=True)
+        P("ThighR", "Torso", "shape", "sphere", (1.05, 1.65, 1.15), "bot", u=0.62, v=0.15, inset=0.25, c=scales_c, joint=True, mirror=True)
+        P("FootR", "ThighR", "detail", "box", (0.78, 0.38, 1.25), "bot", u=0, v=-0.22, inset=0.05, c=scales_c, mirror=True)
+
+        P("Tail1", "Torso", "shape", "cylinder", (0.95, 1.55, 0.95), "back", u=0, v=-0.25, inset=0.15, ro=(-68, 0, 0), c=scales_c, joint=True)
+        P("Tail2", "Tail1", "shape", "cylinder", (0.68, 1.45, 0.68), "top", u=0, v=0, inset=0.10, ro=(15, 0, 0), c=scales_c, joint=True)
+        P("TailFlame", "Tail2", "detail", "cone", (0.62, 0.95, 0.62), "top", u=0, v=0, inset=0.06, c="#f97316", mat="Neon")
+
+        for si in range(4):
+            P(f"BackSpine{si}", "Torso", "detail", "cone", (0.28, 0.55, 0.38), "back", u=0, v=0.55 - si*0.35, inset=0.05, ro=(75, 0, 0), c=belly_c)
+        return {"category": "dragon", "riggable": True, "parts": parts}, "Draconic Anatomical Modeler"
+
+    # =====================================================================
+    # 3. DINOSAURS (Theropods: T-Rex/Raptor vs. Quadrupeds: Triceratops/Stegosaurus/Brachiosaurus)
+    # =====================================================================
+    if domain == "dinosaur":
+        is_tri = any(w in ptoks for w in ("triceratops", "ankylosaurus", "stegosaurus"))
+        is_brach = any(w in ptoks for w in ("brachiosaurus", "brontosaurus", "diplodocus"))
+        skin = c_main or ("#2563eb" if "triceratops" in ptoks else "#16a34a")
+        belly = c_sec or "#fde68a"
+
+        if is_tri or is_brach:
+            bw, bh, bl = 2.2 * jw, 1.85 * jh, 3.6 * jl
+            P("Torso", None, "raw", "sphere", (bw, bh, bl), "center", c=skin)
+            nh = 3.6 * jh if is_brach else 0.85
+            P("Neck", "Torso", "raw", "cylinder", (0.95, nh, 0.95), "top", u=0, v=-0.78, inset=0.2, c=skin, joint=True)
+            P("Head", "Neck", "raw", "box", (1.25, 1.15, 1.45), "top", u=0, v=-0.35, inset=0.12, c=skin, joint=True)
+            if "triceratops" in ptoks:
+                P("BoneFrill", "Head", "shape", "box", (2.35, 1.95, 0.28), "back", u=0, v=0.35, inset=0.08, c=skin)
+                P("BrowHornR", "Head", "detail", "cone", (0.28, 1.35, 0.28), "top", u=0.55, v=-0.2, inset=0.06, ro=(-55, 0, 0), c="#fef3c7", mirror=True)
+                P("NoseHorn", "Head", "detail", "cone", (0.24, 0.65, 0.24), "front", u=0, v=0.35, inset=0.05, ro=(-25, 0, 0), c="#fef3c7")
+            if "stegosaurus" in ptoks:
+                for pi in range(5):
+                    P(f"DorsalPlate{pi}", "Torso", "detail", "cone", (0.24, 0.95, 0.68), "top", u=0, v=-0.6 + pi*0.3, inset=0.08, c="#ea580c")
+            for v_pos, tg in ((-0.72, "F"), (0.72, "B")):
+                P(f"Leg{tg}R", "Torso", "shape", "cylinder", (0.58, 1.65, 0.58), "bot", u=0.68, v=v_pos, inset=0.12, c=skin, joint=True, mirror=True)
+            P("Tail", "Torso", "shape", "cone", (1.1, 2.4, 1.1), "back", u=0, v=0, inset=0.25, ro=(80, 0, 0), c=skin, joint=True)
         else:
-            P("PitchedRoof", "MainWalls", "shape", "wedge", (w + 0.9, 2.2 * jh, d + 0.9), "top", u=0, v=0, inset=0.02, c=roof_c, mat="Slate")
-            P("ChimneyStack", "MainWalls", "shape", "box", (0.9, 2.5, 0.9), "top", u=0.58, v=0.35, inset=0.05, c="#78350f", mat="Brick")
+            # Bipedal Theropod (T-Rex / Raptor / Spinosaurus)
+            P("Torso", None, "raw", "sphere", (2.1 * jw, 2.0 * jh, 3.2 * jl), "center", c=skin)
+            P("Neck", "Torso", "raw", "cylinder", (1.15, 1.25, 1.15), "top", u=0, v=-0.68, inset=0.22, c=skin, joint=True)
+            P("Skull", "Neck", "raw", "box", (1.35 * jw, 1.15 * jh, 1.95 * jl), "top", u=0, v=-0.45, inset=0.15, c=skin, joint=True)
+            P("LowerJaw", "Skull", "shape", "box", (1.18 * jw, 0.42, 1.75 * jl), "bot", u=0, v=-0.1, inset=0.08, ro=(22, 0, 0), c=belly, joint=True)
+            for ti in range(4):
+                P(f"Tooth{ti}R", "Skull", "detail", "cone", (0.14, 0.32, 0.14), "bot", u=0.72, v=-0.7 + ti*0.35, inset=0.02, ro=(180, 0, 0), c="#ffffff", mirror=True)
+            P("EyeR", "Skull", "detail", "sphere", (0.28, 0.28, 0.16), "right", u=0.2, v=0.25, inset=0.03, c="#facc15", mat="Neon", mirror=True)
+            P("TinyArmR", "Torso", "detail", "box", (0.34, 0.85, 0.34), "right", u=-0.65, v=-0.25, inset=0.06, ro=(-35, 0, 0), c=skin, joint=True, mirror=True)
+            P("ThighR", "Torso", "shape", "sphere", (1.15, 1.85, 1.35), "bot", u=0.65, v=0.1, inset=0.28, c=skin, joint=True, mirror=True)
+            P("ShinR", "ThighR", "shape", "cylinder", (0.62, 1.45, 0.62), "bot", u=0, v=0.1, inset=0.12, c=skin, joint=True, mirror=True)
+            P("ClawFootR", "ShinR", "detail", "box", (0.82, 0.38, 1.35), "bot", u=0, v=-0.25, inset=0.05, c=skin, mirror=True)
+            P("Tail1", "Torso", "shape", "cone", (1.35, 2.8 * jl, 1.35), "back", u=0, v=0.1, inset=0.35, ro=(85, 0, 0), c=skin, joint=True)
+            if "spinosaurus" in ptoks:
+                P("SpinoSail", "Torso", "shape", "sphere", (0.28, 1.65, 2.6), "top", u=0, v=0.1, inset=0.25, c="#ea580c")
+        return {"category": "dinosaur", "riggable": True, "parts": parts}, "Paleontological 3D Modeler"
 
-        P("EntryStairs", "Foundation", "detail", "box", (2.6, 0.48, 0.95), "front", u=0, v=-0.08, inset=0.05, c=trim_c, mat="Slate")
-        v_door = -1.0 + (2.2 / th)
-        P("DoorFrame", "MainWalls", "detail", "box", (1.95, 2.25, 0.24), "front", u=0, v=v_door, inset=0.04, c="#0f172a", mat="Metal")
-        P("DoorLeafR", "DoorFrame", "detail", "box", (0.78, 2.0, 0.12), "front", u=0.42, v=-0.04, inset=0.02, c="#78350f", mat="Wood", mirror=True)
-        P("DoorHandleR", "DoorLeafR", "detail", "sphere", (0.14, 0.14, 0.14), "front", u=-0.65, v=0, inset=0.01, c="#d4af37", mat="Metal", mirror=True)
-        P("EntryCanopy", "DoorFrame", "detail", "box", (2.55, 0.22, 1.05), "top", u=0, v=-0.45, inset=0.04, c=roof_c, mat="Metal")
-        P("CanopySign", "EntryCanopy", "detail", "box", (1.9, 0.14, 0.22), "front", u=0, v=0, inset=0.02, c="#38bdf8", mat="Neon")
+    # =====================================================================
+    # 4. ARTHROPODS (Spiders, Scorpions, Insects, Mantises, Bees)
+    # =====================================================================
+    if domain == "arthropod":
+        is_scorp = "scorpion" in ptoks
+        is_fly = any(w in ptoks for w in ("bee", "bumblebee", "wasp", "hornet", "butterfly", "dragonfly"))
+        body_c = c_main or ("#eab308" if "bee" in ptoks or "wasp" in ptoks else "#1e293b")
+        acc_c = c_sec or ("#1e293b" if "bee" in ptoks else "#dc2626")
 
-        for fl in range(floors):
-            vy = -1.0 + ((fl + 0.54) * 2.0 / floors)
-            for ux in (-0.64, 0.0, 0.64):
-                if fl == 0 and abs(ux) < 0.22:
-                    continue
-                for fc_s in ("front", "back"):
-                    wn = f"Win_{fc_s}_{fl}_{int((ux+1)*10)}"
-                    P(wn, "MainWalls", "detail", "box", (1.22, 1.38, 0.18), fc_s, u=ux, v=vy, inset=0.04, c="#0f172a", mat="Metal")
-                    P(wn + "_Glass", wn, "detail", "box", (1.02, 1.16, 0.08), fc_s, u=0, v=0, inset=0.01, c="#7dd3fc", mat="Glass", tr=0.35)
-                    P(wn + "_Sill", wn, "detail", "box", (1.36, 0.14, 0.30), "bot", u=0, v=0, inset=0.02, c=trim_c, mat="Slate")
-            for s_face in ("right", "left"):
-                swn = f"SideWin_{s_face}_{fl}"
-                P(swn, "MainWalls", "detail", "box", (0.18, 1.35, 1.35), s_face, u=0, v=vy, inset=0.04, c="#0f172a", mat="Metal")
-                P(swn + "_Glass", swn, "detail", "box", (0.08, 1.12, 1.12), s_face, u=0, v=0, inset=0.01, c="#7dd3fc", mat="Glass", tr=0.35)
+        P("Cephalothorax", None, "raw", "sphere", (1.85 * jw, 1.15 * jh, 2.0 * jl), "center", c=body_c)
+        P("Abdomen", "Cephalothorax", "raw", "sphere", (2.35 * jw, 1.75 * jh, 2.65 * jl), "back", u=0, v=0.18, inset=0.35, c=acc_c if "bee" in ptoks else body_c)
+        P("HourglassMark", "Abdomen", "detail", "sphere", (0.65, 0.25, 0.85), "top", u=0, v=0, inset=0.05, c=acc_c, mat="Neon")
 
-        return {"category": "building", "riggable": False, "parts": parts}, "Architectural Multi-Story Modeler"
+        for ei, ux in enumerate((0.22, 0.48)):
+            P(f"SpiderEye{ei}R", "Cephalothorax", "detail", "sphere", (0.22, 0.22, 0.14), "front", u=ux, v=0.15, inset=0.03, c="#ef4444", mat="Neon", mirror=True)
+        P("FangCheliceraR", "Cephalothorax", "detail", "cone", (0.26, 0.55, 0.26), "front", u=0.35, v=-0.25, inset=0.05, ro=(160, 0, 0), c=acc_c, mirror=True)
 
-    # ---------------------------------------------------------------------
-    # DOMAIN B: GROUND VEHICLES
-    # ---------------------------------------------------------------------
-    if any(w in ptoks for w in (
-        "car", "sportscar", "racecar", "supercar", "sedan", "coupe", "suv", "jeep", "truck",
-        "pickup", "van", "bus", "taxi", "policecar", "ambulance", "firetruck", "limo",
-        "cybertruck", "tractor", "buggy", "kart", "f1", "tank", "panzer", "apc", "bike", "motorcycle", "excavator", "bulldozer"
-    )) or any(w in wtoks for w in ("automobile", "motor vehicle", "sports car", "armored fighting vehicle")):
-        is_tank = any(w in ptoks for w in ("tank", "panzer", "apc", "excavator", "bulldozer"))
-        is_truck = any(w in ptoks for w in ("truck", "pickup", "suv", "jeep", "firetruck", "van", "bus", "ambulance"))
-        body_c = c_main or ("#4d7c0f" if is_tank else ("#eab308" if "taxi" in ptoks or "excavator" in ptoks else ("#1e3a8a" if "police" in prompt else "#dc2626")))
-        trim_c = c_sec or "#1e293b"
-        W, H, L = (2.8 if is_tank else 2.4) * jw, (0.95 if is_truck or is_tank else 0.68) * jh, 5.2 * jl
+        n_legs = 3 if is_fly else 4
+        for li in range(n_legs):
+            uz = -0.65 + li * (1.3 / max(1, n_legs - 1))
+            P(f"UpperLeg{li}R", "Cephalothorax", "shape", "cylinder", (0.26, 1.65 * jw, 0.26), "right", u=uz, v=0.1, inset=0.12, ro=(0, 0, -52), c=body_c, joint=True, mirror=True)
+            P(f"LowerLeg{li}R", f"UpperLeg{li}R", "shape", "cone", (0.24, 1.75 * jh, 0.24), "bot", u=0, v=0, inset=0.08, ro=(0, 0, 125), c=body_c, joint=True, mirror=True)
 
-        P("Chassis", None, "raw", "box", (W, H, L), "center", c=body_c, mat="Metal")
-        if is_tank:
-            P("TurretBase", "Chassis", "shape", "box", (W * 0.78, 0.85, L * 0.48), "top", u=0, v=0.05, inset=0.04, c=body_c, mat="Metal", joint=True)
-            P("MainCannon", "TurretBase", "shape", "cylinder", (0.36, 3.4, 0.36), "front", u=0, v=0.05, inset=0.15, ro=(90, 0, 0), c="#1e293b", mat="Metal")
-            P("CommanderHatch", "TurretBase", "detail", "cylinder", (0.75, 0.24, 0.75), "top", u=0.35, v=0.25, inset=0.02, c=trim_c, mat="Metal")
-            P("TrackR", "Chassis", "shape", "box", (0.55, 0.92, L * 0.96), "right", u=0, v=-0.22, inset=0.04, c="#0f172a", mat="Slate", mirror=True)
-            for wi, wz in enumerate((-0.72, -0.24, 0.24, 0.72)):
-                P(f"RoadWheel{wi}R", "TrackR", "detail", "cylinder", (0.72, 0.58, 0.72), "right", u=wz, v=0, inset=0.22, ro=(0, 0, 90), c="#334155", mat="Metal", mirror=True)
+        if is_scorp:
+            P("PincerArmR", "Cephalothorax", "shape", "box", (0.45, 0.38, 1.45), "front", u=0.75, v=0, inset=0.1, c=body_c, joint=True, mirror=True)
+            P("PincerClawR", "PincerArmR", "detail", "sphere", (0.68, 0.48, 0.95), "front", u=0, v=0, inset=0.08, c=acc_c, mirror=True)
+            t1 = "Abdomen"
+            for ti in range(4):
+                tn = f"ScorpTail{ti}"
+                P(tn, t1, "shape", "sphere", (0.55 - ti*0.06, 0.75, 0.55 - ti*0.06), "top", u=0, v=-0.35, inset=0.08, c=body_c, joint=True)
+                t1 = tn
+            P("VenomStinger", t1, "detail", "cone", (0.32, 0.78, 0.32), "front", u=0, v=0.2, inset=0.05, ro=(-90, 0, 0), c="#ef4444", mat="Neon")
+        if is_fly:
+            P("InsectWingR", "Cephalothorax", "detail", "sphere", (2.4, 0.12, 1.25), "top", u=0.65, v=0, inset=0.05, ro=(0, 0, 22), c="#e0f2fe", mat="Glass", tr=0.45, mirror=True)
+        return {"category": "arthropod", "riggable": True, "parts": parts}, "Arthropod Anatomical Modeler"
+
+    # =====================================================================
+    # 5. CEPHALOPODS & MARINE (Octopus, Kraken, Sharks, Whales, Turtles)
+    # =====================================================================
+    if domain in ("cephalopod", "marine"):
+        if domain == "cephalopod":
+            skin = c_main or "#7c3aed"
+            dark = c_sec or "#4c1d95"
+            P("HeadCore", None, "raw", "box", (3.0 * jw, 2.2 * jh, 2.8 * jl), "center", c=skin)
+            P("Mantle1", "HeadCore", "shape", "box", (3.2 * jw, 1.3 * jh, 3.0 * jl), "top", u=0, v=0.1, inset=0.04, c=skin)
+            P("Mantle2", "Mantle1", "shape", "box", (2.4 * jw, 1.1 * jh, 2.3 * jl), "top", u=0, v=0, inset=0.04, c=dark)
+            P("MantleCrown", "Mantle2", "shape", "cone", (1.6 * jw, 0.9 * jh, 1.6 * jl), "top", u=0, v=0, inset=0.04, c=dark)
+            P("EyeFrameR", "HeadCore", "detail", "box", (0.78, 0.85, 0.16), "front", u=0.52, v=0.12, inset=0.03, c="#1e293b", mirror=True)
+            P("EyeR", "EyeFrameR", "detail", "box", (0.64, 0.70, 0.10), "front", u=0, v=0, inset=0.01, c="#facc15", mat="Neon", mirror=True)
+            P("PupilR", "EyeR", "detail", "box", (0.22, 0.50, 0.08), "front", u=0, v=0, inset=0.01, c="#0f172a", mirror=True)
+            P("Siphon", "HeadCore", "detail", "cylinder", (0.58, 0.52, 0.58), "front", u=0, v=-0.45, inset=0.05, ro=(90, 0, 0), c="#f8fafc")
+            for i, (fc_s, u_s) in enumerate([("front",-0.65),("front",0.65),("back",-0.65),("back",0.65),("right",-0.55),("right",0.55),("left",-0.55),("left",0.55)]):
+                P(f"Tentacle{i}", "HeadCore", "shape", "box", (0.68, 0.52, 1.85), fc_s, u=u_s, v=-0.78, inset=0.08, c=skin, joint=True)
+                P(f"TentTip{i}", f"Tentacle{i}", "detail", "sphere", (0.54, 0.65, 0.54), "top", u=0, v=-0.65, inset=0.05, c=dark)
+            return {"category": "cephalopod", "riggable": True, "parts": parts}, "Cephalopod Modeler"
         else:
-            P("Hood", "Chassis", "shape", "box", (W * 0.96, 0.36, L * 0.32), "top", u=0, v=-0.62, inset=0.02, c=body_c, mat="Metal")
-            P("FrontSplitter", "Chassis", "detail", "box", (W * 1.02, 0.20, 0.42), "front", u=0, v=-0.35, inset=0.02, c="#0f172a", mat="Metal")
-            cab_l = L * (0.56 if is_truck else 0.42)
-            P("CabinGlass", "Chassis", "shape", "box", (W * 0.86, 0.82 if not is_truck else 1.05, cab_l), "top", u=0, v=0.12, inset=0.02, c="#38bdf8", mat="Glass", tr=0.28)
-            P("RoofCap", "CabinGlass", "shape", "box", (W * 0.84, 0.16, cab_l * 0.90), "top", u=0, v=0, inset=0.02, c=body_c, mat="Metal")
-            P("RacingStripe", "Hood", "detail", "box", (0.46, 0.05, L * 0.30), "top", u=0, v=0, inset=0.01, c="#f8fafc")
-            P("HeadlightR", "Chassis", "detail", "box", (0.48, 0.24, 0.12), "front", u=0.66, v=0.12, inset=0.02, c="#fef08a", mat="Neon", mirror=True)
-            P("TaillightR", "Chassis", "detail", "box", (0.52, 0.24, 0.12), "back", u=0.66, v=0.12, inset=0.02, c="#ef4444", mat="Neon", mirror=True)
-            P("Grille", "Chassis", "detail", "box", (W * 0.48, 0.28, 0.10), "front", u=0, v=0.05, inset=0.02, c="#0f172a", mat="Metal")
-            P("SideMirrorR", "CabinGlass", "detail", "box", (0.28, 0.18, 0.22), "right", u=-0.65, v=-0.15, inset=0.02, c=body_c, mat="Metal", mirror=True)
-            ws = 1.12 if is_truck else 0.94
-            for uz, tag in ((-0.62, "F"), (0.62, "B")):
-                P(f"Wheel{tag}R", "Chassis", "shape", "cylinder", (ws, 0.50, ws), "right", u=uz, v=-0.28, inset=0.06, ro=(0, 0, 90), c="#0f172a", joint=True, mirror=True)
-                P(f"Rim{tag}R", f"Wheel{tag}R", "detail", "cylinder", (ws * 0.56, 0.54, ws * 0.56), "right", u=0, v=0, inset=0.22, ro=(0, 0, 90), c="#cbd5e1", mat="Metal", mirror=True)
-            if not is_truck:
-                P("SpoPostR", "Chassis", "detail", "box", (0.14, 0.48, 0.24), "top", u=0.62, v=0.88, inset=0.02, c="#0f172a", mat="Metal", mirror=True)
-                P("RearWing", "Chassis", "detail", "box", (W * 0.98, 0.14, 0.58), "top", u=0, v=0.90, inset=-0.38, c=trim_c, mat="Metal")
-        return {"category": "vehicle", "riggable": True, "parts": parts}, "Vehicle Engineering Modeler"
+            skin = c_main or ("#f8fafc" if "beluga" in ptoks else ("#16a34a" if "turtle" in ptoks else "#3b82f6"))
+            P("Body", None, "raw", "sphere", (2.4 * jw, 2.0 * jh, 3.8 * jl), "center", c=skin)
+            P("Snout", "Body", "shape", "sphere", (1.8 * jw, 1.4 * jh, 1.8 * jl), "front", u=0, v=-0.08, inset=0.45, c=skin)
+            P("TailStock", "Body", "shape", "cone", (1.4 * jw, 2.0 * jl, 1.4 * jh), "back", u=0, v=0, inset=0.35, ro=(90, 0, 0), c=skin, joint=True)
+            P("TailFluke", "TailStock", "detail", "box", (2.4 * jw, 0.24, 0.95), "back", u=0, v=0, inset=0.15, c=skin, joint=True)
+            P("DorsalFin", "Body", "detail", "wedge", (0.28, 1.15, 1.25), "top", u=0, v=0.15, inset=0.12, c=skin)
+            P("FinR", "Body", "shape", "box", (1.45, 0.22, 0.85), "right", u=-0.2, v=-0.35, inset=0.15, ro=(0, 0, -20), c=skin, joint=True, mirror=True)
+            P("EyeR", "Snout", "detail", "sphere", (0.26, 0.26, 0.18), "right", u=-0.1, v=0.15, inset=0.04, c="#0f172a", mirror=True)
+            return {"category": "marine", "riggable": True, "parts": parts}, "Marine Anatomical Modeler"
 
-    # ---------------------------------------------------------------------
-    # DOMAIN C: AIRCRAFT & SPACECRAFT
-    # ---------------------------------------------------------------------
-    if any(w in ptoks for w in (
-        "plane", "airplane", "jet", "fighterjet", "biplane", "airliner", "spaceship",
-        "starfighter", "rocket", "shuttle", "ufo", "saucer", "helicopter", "heli", "chopper", "drone"
-    )) or any(w in wtoks for w in ("aircraft", "helicopter", "spacecraft", "airliner")):
-        is_heli = any(w in ptoks for w in ("helicopter", "heli", "chopper", "drone"))
-        is_ufo = any(w in ptoks for w in ("ufo", "saucer"))
-        body_c = c_main or ("#64748b" if "fighter" in prompt or "jet" in ptoks else "#f8fafc")
-        acc_c = c_sec or "#2563eb"
+    # =====================================================================
+    # 6. BIRDS & PHOENIX
+    # =====================================================================
+    if domain == "bird":
+        main_c = c_main or ("#dc2626" if "phoenix" in ptoks else "#2563eb")
+        acc_c = c_sec or "#facc15"
+        P("Torso", None, "raw", "sphere", (2.0 * jw, 2.3 * jh, 2.5 * jl), "center", c=main_c)
+        P("BreastPlume", "Torso", "shape", "sphere", (1.65 * jw, 1.65 * jh, 0.85), "front", u=0, v=0.05, inset=0.35, c=acc_c)
+        P("Neck", "Torso", "raw", "cylinder", (0.95, 1.15, 0.95), "top", u=0, v=-0.55, inset=0.18, c=main_c, joint=True)
+        P("Head", "Neck", "raw", "sphere", (1.22, 1.12, 1.28), "top", u=0, v=-0.15, inset=0.15, c=main_c, joint=True)
+        P("Beak", "Head", "detail", "cone", (0.58, 0.85, 0.58), "front", u=0, v=-0.08, inset=0.12, ro=(-90, 0, 0), c=acc_c)
+        P("CrownCrest", "Head", "detail", "box", (0.24, 0.85, 0.95), "top", u=0, v=0.25, inset=0.08, c=acc_c)
+        P("EyeR", "Head", "detail", "sphere", (0.26, 0.26, 0.16), "right", u=-0.25, v=0.15, inset=0.04, c=acc_c, mat="Neon", mirror=True)
+        P("WingR", "Torso", "shape", "box", (2.3 * jl, 0.30, 1.35), "right", u=-0.1, v=0.35, inset=0.12, ro=(0, 0, 26), c=main_c, joint=True, mirror=True)
+        P("WingOuterR", "WingR", "detail", "box", (1.6 * jl, 0.22, 1.05), "right", u=0, v=0, inset=0.06, ro=(0, 0, 14), c=acc_c, mirror=True)
+        P("LegR", "Torso", "shape", "cylinder", (0.36, 1.45, 0.36), "bot", u=0.48, v=0.05, inset=0.10, c=acc_c, joint=True, mirror=True)
+        P("TalonR", "LegR", "detail", "box", (0.52, 0.22, 0.82), "bot", u=0, v=-0.15, inset=0.04, c="#1e293b", mirror=True)
+        P("TailPlume", "Torso", "detail", "box", (1.35, 0.24, 2.1), "back", u=0, v=-0.35, inset=0.12, c=acc_c, joint=True)
+        return {"category": "bird", "riggable": True, "parts": parts}, "Avian Anatomical Modeler"
 
-        if is_ufo:
-            P("SaucerDisc", None, "raw", "cylinder", (4.8 * jw, 0.65 * jh, 4.8 * jw), "center", c="#94a3b8", mat="Metal")
-            P("GlassDome", "SaucerDisc", "shape", "sphere", (2.4 * jw, 1.45 * jh, 2.4 * jw), "top", u=0, v=0, inset=0.25, c="#38bdf8", mat="Glass", tr=0.3)
-            P("TractorRing", "SaucerDisc", "detail", "cylinder", (1.8, 0.25, 1.8), "bot", u=0, v=0, inset=0.04, c="#4ade80", mat="Neon")
-        elif is_heli:
-            P("Fuselage", None, "raw", "sphere", (2.1 * jw, 1.75 * jh, 3.4 * jl), "center", c=body_c, mat="Metal")
-            P("CockpitGlass", "Fuselage", "shape", "sphere", (1.85 * jw, 1.35 * jh, 1.65 * jl), "front", u=0, v=0.05, inset=0.55, c="#38bdf8", mat="Glass", tr=0.3)
-            P("TailBoom", "Fuselage", "shape", "cylinder", (0.55, 2.9 * jl, 0.55), "back", u=0, v=0.18, inset=0.2, ro=(90, 0, 0), c=body_c, mat="Metal")
-            P("TailFin", "TailBoom", "detail", "wedge", (0.22, 1.15, 0.85), "back", u=0, v=0.35, inset=0.1, c=acc_c, mat="Metal")
-            P("RotorMast", "Fuselage", "shape", "cylinder", (0.42, 0.55, 0.42), "top", u=0, v=0, inset=0.05, c="#1e293b", mat="Metal", joint=True)
-            P("RotorBlade1", "RotorMast", "detail", "box", (5.4 * jw, 0.10, 0.36), "top", u=0, v=0, inset=0.02, c="#0f172a", mat="Metal")
-            P("RotorBlade2", "RotorMast", "detail", "box", (0.36, 0.10, 5.4 * jw), "top", u=0, v=0, inset=0.02, c="#0f172a", mat="Metal")
-            P("SkidStrutR", "Fuselage", "shape", "cylinder", (0.18, 0.75, 0.18), "bot", u=0.65, v=0, inset=0.08, c="#1e293b", mat="Metal", mirror=True)
-            P("LandingSkidR", "SkidStrutR", "detail", "box", (0.22, 0.20, 3.2 * jl), "bot", u=0, v=0, inset=0.02, c="#1e293b", mat="Metal", mirror=True)
-        else:
-            P("Fuselage", None, "raw", "cylinder", (1.55 * jw, 5.2 * jl, 1.55 * jh), "center", ro=(90, 0, 0), c=body_c, mat="Metal")
-            P("NoseCone", "Fuselage", "shape", "sphere", (1.45 * jw, 1.35 * jh, 1.85), "front", u=0, v=0, inset=0.45, c=acc_c, mat="Metal")
-            P("CanopyGlass", "Fuselage", "detail", "sphere", (1.15 * jw, 0.75, 2.1), "top", u=0, v=-0.35, inset=0.25, c="#38bdf8", mat="Glass", tr=0.28)
-            P("WingR", "Fuselage", "shape", "box", (3.8 * jw, 0.22, 1.45 * jl), "right", u=-0.05, v=0, inset=0.15, c=body_c, mat="Metal", mirror=True)
-            P("WingMissileR", "WingR", "detail", "cylinder", (0.24, 1.35, 0.24), "bot", u=0.2, v=0, inset=0.02, ro=(90, 0, 0), c=acc_c, mat="Metal", mirror=True)
-            P("TailFin", "Fuselage", "shape", "wedge", (0.24, 1.45, 1.25), "top", u=0, v=0.78, inset=0.08, c=acc_c, mat="Metal")
-            P("ThrusterGlow", "Fuselage", "detail", "cylinder", (0.95, 0.35, 0.95), "back", u=0, v=0, inset=0.08, ro=(90, 0, 0), c="#f97316", mat="Neon")
-        return {"category": "aircraft", "riggable": True, "parts": parts}, "Aerospace 3D Modeler"
-
-    # ---------------------------------------------------------------------
-    # DOMAIN D: FELINES & SMALL/MEDIUM MAMMALS
-    # ---------------------------------------------------------------------
-    if any(w in ptoks for w in (
-        "cat", "kitten", "kitty", "lion", "tiger", "panther", "leopard", "cheetah", "jaguar", "lynx",
-        "dog", "puppy", "wolf", "fox", "husky", "corgi", "hound", "bear", "panda", "polarbear",
-        "rabbit", "bunny", "mouse", "rat", "squirrel", "raccoon", "otter", "capybara", "hamster", "pikachu"
-    )) or any(w in wtoks for w in ("felidae", "feline", "canidae", "canine", "carnivora", "ursidae", "rodent")):
-        is_feline = any(w in wtoks for w in ("cat", "kitten", "kitty", "lion", "tiger", "panther", "leopard", "cheetah", "felidae", "feline"))
-        is_bear = any(w in ptoks for w in ("bear", "panda", "polarbear", "grizzly"))
+    # =====================================================================
+    # 7. FELINES, CANINES & SMALL/MEDIUM MAMMALS
+    # =====================================================================
+    if domain in ("feline", "canine", "ursine_small"):
+        is_feline = (domain == "feline")
+        is_bear = any(w in ptoks for w in ("bear", "grizzly", "polarbear", "panda"))
         is_rabbit = any(w in ptoks for w in ("rabbit", "bunny", "hare", "pikachu"))
-        sc = 1.45 if any(w in ptoks for w in ("lion", "tiger", "bear", "panda", "polarbear")) else 1.0
+        sc = 1.45 if any(w in ptoks for w in ("lion", "tiger", "bear", "panda", "polarbear", "gorilla")) else 1.0
 
-        default_fur = "#facc15" if "pikachu" in ptoks else ("#d97706" if "tiger" in ptoks else ("#eab308" if "lion" in ptoks else ("#f8fafc" if "polarbear" in ptoks or "panda" in ptoks or "rabbit" in ptoks else ("#78350f" if is_bear else ("#ea580c" if "fox" in ptoks else "#e07a2e")))))
+        default_fur = "#facc15" if "pikachu" in ptoks else ("#d97706" if "tiger" in ptoks else ("#eab308" if "lion" in ptoks else ("#f8fafc" if "polarbear" in ptoks or "panda" in ptoks or "rabbit" in ptoks else ("#78350f" if is_bear else ("#ea580c" if "fox" in ptoks else ("#64748b" if domain == "canine" else "#e07a2e"))))))
         fur = c_main or default_fur
         sec_fur = c_sec or ("#1e293b" if "panda" in ptoks else ("#fef3c7" if fur not in ("#1e293b", "#f8fafc") else "#cbd5e1"))
         nose_c = "#f472b6" if (is_feline or is_rabbit) else "#1e293b"
@@ -526,20 +791,15 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
             P("TailBase", "Torso", "shape", "cylinder", (0.28 * sc, 1.05 * sc, 0.28 * sc), "back", u=0, v=0.42, inset=0.08, ro=(32, 0, 0), c=fur, joint=True)
             P("TailTip", "TailBase", "detail", "sphere", (0.32 * sc, 0.38 * sc, 0.32 * sc), "top", u=0, v=0, inset=0.04, c=sec_fur)
 
-        return {"category": "animal", "riggable": True, "parts": parts}, "Mammalian Anatomical Modeler"
+        return {"category": domain, "riggable": True, "parts": parts}, f"{domain.capitalize()} Anatomical Modeler"
 
-    # ---------------------------------------------------------------------
-    # DOMAIN E: UNGULATES, HERBIVORES & DINOSAURS
-    # ---------------------------------------------------------------------
-    if any(w in ptoks for w in (
-        "horse", "unicorn", "pegasus", "zebra", "donkey", "cow", "bull", "bison", "goat", "sheep",
-        "ram", "deer", "moose", "elk", "stag", "giraffe", "camel", "llama", "elephant", "mammoth",
-        "rhino", "hippo", "pig", "boar", "dino", "dinosaur", "trex", "raptor", "triceratops", "croc", "crocodile"
-    )) or any(w in wtoks for w in ("equidae", "bovidae", "cervidae", "dinosaur", "ungulate", "herbivore", "reptile")):
+    # =====================================================================
+    # 8. UNGULATES & PACHYDERMS (Horses, Unicorns, Deer, Cows, Elephants, Giraffes)
+    # =====================================================================
+    if domain == "ungulate":
         is_uni = any(w in ptoks for w in ("unicorn", "pegasus"))
-        is_trex = any(w in ptoks for w in ("trex", "raptor", "dinosaur", "dino"))
-        coat = c_main or ("#9be2e8" if is_uni else ("#16a34a" if is_trex or "croc" in ptoks else ("#f472b6" if "pig" in ptoks else "#92400e")))
-        acc = c_sec or ("#a855f7" if is_uni else ("#eab308" if is_trex else "#1e293b"))
+        coat = c_main or ("#9be2e8" if is_uni else ("#f472b6" if "pig" in ptoks else ("#94a3b8" if "elephant" in ptoks or "rhino" in ptoks else "#92400e")))
+        acc = c_sec or ("#a855f7" if is_uni else "#1e293b")
 
         bw, bh, bl = 1.9 * jw, 1.55 * jh, 3.45 * jl
         leg_h = (3.4 if "giraffe" in ptoks else (2.2 if any(w in ptoks for w in ("horse", "unicorn", "pegasus", "deer", "camel")) else 1.45)) * jh
@@ -561,236 +821,190 @@ def synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed):
         P("Mane", "Neck", "detail", "box", (0.28, neck_h * 0.92, 0.36), "back", u=0, v=0.05, inset=0.04, c=acc)
         P("Tail", "Torso", "shape", "box", (0.38, 1.45, 0.38), "back", u=0, v=-0.15, inset=0.06, c=acc, joint=True)
 
-        if is_uni or any(w in combined for w in ("horn", "unicorn", "rhino", "triceratops", "bull", "goat", "ram", "deer", "stag")):
+        if is_uni or any(w in ptoks for w in ("horn", "unicorn", "rhino", "bull", "goat", "ram", "deer", "stag")):
             P("Horn", "Head", "detail", "cone", (0.28, 1.15, 0.28), "top", u=0, v=-0.45, inset=0.06, c="#facc15", mat="Neon")
         if "elephant" in ptoks or "mammoth" in ptoks:
             P("Trunk", "Muzzle", "shape", "cylinder", (0.36, 1.65, 0.36), "bot", u=0, v=-0.2, inset=0.08, c=coat, joint=True)
             P("TuskR", "Muzzle", "detail", "cone", (0.20, 0.95, 0.20), "front", u=0.55, v=-0.2, inset=0.04, ro=(-65, 0, 0), c="#fef3c7", mirror=True)
-        return {"category": "animal", "riggable": True, "parts": parts}, "Ungulate & Reptilian Modeler"
+        return {"category": "ungulate", "riggable": True, "parts": parts}, "Ungulate Anatomical Modeler"
 
-    # ---------------------------------------------------------------------
-    # DOMAIN F: BIRDS, DRAGONS & WINGED CREATURES
-    # ---------------------------------------------------------------------
-    if any(w in ptoks for w in (
-        "bird", "eagle", "phoenix", "falcon", "hawk", "owl", "raven", "crow", "parrot", "duck",
-        "swan", "goose", "chicken", "rooster", "penguin", "flamingo", "peacock", "dragon", "charizard", "wyvern", "griffin"
-    )) or any(w in wtoks for w in ("avian", "bird", "waterfowl", "bird of prey", "dragon")):
-        main_c = c_main or ("#dc2626" if "phoenix" in ptoks else ("#ea580c" if "charizard" in ptoks or "dragon" in ptoks else "#2563eb"))
-        acc_c = c_sec or "#facc15"
-        P("Torso", None, "raw", "sphere", (2.0 * jw, 2.3 * jh, 2.5 * jl), "center", c=main_c)
-        P("BreastPlume", "Torso", "shape", "sphere", (1.65 * jw, 1.65 * jh, 0.85), "front", u=0, v=0.05, inset=0.35, c=acc_c)
-        P("Neck", "Torso", "raw", "cylinder", (0.95, 1.15, 0.95), "top", u=0, v=-0.55, inset=0.18, c=main_c, joint=True)
-        P("Head", "Neck", "raw", "sphere", (1.22, 1.12, 1.28), "top", u=0, v=-0.15, inset=0.15, c=main_c, joint=True)
-        P("Beak", "Head", "detail", "cone", (0.58, 0.85, 0.58), "front", u=0, v=-0.08, inset=0.12, ro=(-90, 0, 0), c=acc_c)
-        P("CrownCrest", "Head", "detail", "box", (0.24, 0.85, 0.95), "top", u=0, v=0.25, inset=0.08, c=acc_c)
-        P("EyeR", "Head", "detail", "sphere", (0.26, 0.26, 0.16), "right", u=-0.25, v=0.15, inset=0.04, c=acc_c, mat="Neon", mirror=True)
-        P("WingR", "Torso", "shape", "box", (2.3 * jl, 0.30, 1.35), "right", u=-0.1, v=0.35, inset=0.12, ro=(0, 0, 26), c=main_c, joint=True, mirror=True)
-        P("WingOuterR", "WingR", "detail", "box", (1.6 * jl, 0.22, 1.05), "right", u=0, v=0, inset=0.06, ro=(0, 0, 14), c=acc_c, mirror=True)
-        P("LegR", "Torso", "shape", "cylinder", (0.36, 1.45, 0.36), "bot", u=0.48, v=0.05, inset=0.10, c=acc_c, joint=True, mirror=True)
-        P("TalonR", "LegR", "detail", "box", (0.52, 0.22, 0.82), "bot", u=0, v=-0.15, inset=0.04, c="#1e293b", mirror=True)
-        P("TailPlume", "Torso", "detail", "box", (1.35, 0.24, 2.1), "back", u=0, v=-0.35, inset=0.12, c=acc_c, joint=True)
-        return {"category": "animal", "riggable": True, "parts": parts}, "Avian & Draconic Modeler"
+    # =====================================================================
+    # 9. BUILDINGS & ARCHITECTURE
+    # =====================================================================
+    if domain == "building":
+        is_castle = any(w in ptoks for w in ("castle", "fort", "citadel", "palace"))
+        is_pagoda = any(w in ptoks for w in ("pagoda", "shrine", "temple"))
+        is_sky = any(w in ptoks for w in ("skyscraper", "office", "hotel", "tower", "lighthouse", "windmill"))
+        floors = rng.randint(4, 5) if "skyscraper" in ptoks else (3 if is_sky or is_pagoda else 2)
+        w = (5.4 if is_sky else 8.2) * jw
+        d = (5.2 if is_sky else 6.4) * jl
+        fh = 2.8 * jh
+        th = floors * fh
 
-    # ---------------------------------------------------------------------
-    # DOMAIN G: MARINE & CEPHALOPODS
-    # ---------------------------------------------------------------------
-    if any(w in ptoks for w in (
-        "octopus", "kraken", "squid", "cthulhu", "jellyfish", "whale", "beluga", "shark",
-        "dolphin", "orca", "fish", "goldfish", "koi", "salmon", "turtle", "crab", "lobster"
-    )) or any(w in wtoks for w in ("cephalopod", "cetacea", "shark", "fish", "marine", "crustacean")):
-        if any(w in ptoks for w in ("octopus", "kraken", "squid", "cthulhu", "jellyfish")):
-            skin = c_main or "#7c3aed"
-            dark = c_sec or "#4c1d95"
-            P("HeadCore", None, "raw", "box", (3.0 * jw, 2.2 * jh, 2.8 * jl), "center", c=skin)
-            P("Mantle1", "HeadCore", "shape", "box", (3.2 * jw, 1.3 * jh, 3.0 * jl), "top", u=0, v=0.1, inset=0.04, c=skin)
-            P("Mantle2", "Mantle1", "shape", "box", (2.4 * jw, 1.1 * jh, 2.3 * jl), "top", u=0, v=0, inset=0.04, c=dark)
-            P("MantleCrown", "Mantle2", "shape", "cone", (1.6 * jw, 0.9 * jh, 1.6 * jl), "top", u=0, v=0, inset=0.04, c=dark)
-            P("EyeFrameR", "HeadCore", "detail", "box", (0.78, 0.85, 0.16), "front", u=0.52, v=0.12, inset=0.03, c="#1e293b", mirror=True)
-            P("EyeR", "EyeFrameR", "detail", "box", (0.64, 0.70, 0.10), "front", u=0, v=0, inset=0.01, c="#facc15", mat="Neon", mirror=True)
-            P("PupilR", "EyeR", "detail", "box", (0.22, 0.50, 0.08), "front", u=0, v=0, inset=0.01, c="#0f172a", mirror=True)
-            P("Siphon", "HeadCore", "detail", "cylinder", (0.58, 0.52, 0.58), "front", u=0, v=-0.45, inset=0.05, ro=(90, 0, 0), c="#f8fafc")
-            for i, (fc_s, u_s) in enumerate([("front",-0.65),("front",0.65),("back",-0.65),("back",0.65),("right",-0.55),("right",0.55),("left",-0.55),("left",0.55)]):
-                P(f"Tentacle{i}", "HeadCore", "shape", "box", (0.68, 0.52, 1.85), fc_s, u=u_s, v=-0.78, inset=0.08, c=skin, joint=True)
-                P(f"TentTip{i}", f"Tentacle{i}", "detail", "sphere", (0.54, 0.65, 0.54), "top", u=0, v=-0.65, inset=0.05, c=dark)
-            return {"category": "animal", "riggable": True, "parts": parts}, "Cephalopod Modeler"
+        wall_c = c_main or ("#dc2626" if is_pagoda else ("#94a3b8" if is_castle else ("#334155" if "skyscraper" in ptoks else rng.choice(["#f1f5f9", "#fef3c7", "#e2e8f0", "#d6b88a"]))))
+        trim_c = c_sec or ("#1e293b" if wall_c != "#334155" else "#cbd5e1")
+        roof_c = "#1e293b" if not is_castle else "#2563eb"
+
+        P("Foundation", None, "raw", "box", (w + 1.0, 0.65, d + 1.0), "center", c=trim_c, mat="Slate")
+        P("MainWalls", "Foundation", "raw", "box", (w, th, d), "top", u=0, v=0, inset=0.02, c=wall_c, mat="Cobblestone" if is_castle else ("SmoothPlastic" if is_sky else "Brick"))
+
+        for ux, sx_tag in ((0.96, "R"), (-0.96, "L")):
+            for vz, sz_tag in ((-0.96, "F"), (0.96, "B")):
+                P(f"Pilaster{sx_tag}{sz_tag}", "MainWalls", "shape", "box", (0.48, th + 0.05, 0.48), "front" if sz_tag=="F" else "back", u=ux, v=0, inset=0.22, c=trim_c, mat="Slate")
+
+        for fl in range(1, floors + 1):
+            vn = clamp(-1.0 + (2.0 * fl / floors), -0.95, 0.98)
+            P(f"CorniceLedge{fl}", "MainWalls", "shape", "box", (w + 0.42, 0.26, d + 0.42), "front", u=0, v=vn, inset=d/2 + 0.21, c=trim_c, mat="Slate")
+
+        if is_castle:
+            for ux, sx_t in ((0.98, "R"), (-0.98, "L")):
+                for vz, sz_t in ((-0.98, "F"), (0.98, "B")):
+                    t_name = f"CornerTower{sx_t}{sz_t}"
+                    P(t_name, "Foundation", "shape", "cylinder", (2.3, th + 1.6, 2.3), "top", u=ux, v=vz, inset=0.02, c=trim_c, mat="Cobblestone")
+                    P(f"Spire{sx_t}{sz_t}", t_name, "shape", "cone", (2.7, 2.0, 2.7), "top", u=0, v=0, inset=0.03, c=roof_c, mat="Slate")
+        elif is_pagoda:
+            par_t = "MainWalls"
+            for tier in range(3):
+                sc_t = 1.0 - tier * 0.22
+                eave = f"PagodaEave{tier}"
+                P(eave, par_t, "shape", "cone", ((w + 1.6)*sc_t, 0.9, (d + 1.6)*sc_t), "top", u=0, v=0, inset=0.03, ro=(0, 45, 0), c="#1e293b", mat="Slate")
+                if tier < 2:
+                    par_t = f"PagodaStory{tier}"
+                    P(par_t, eave, "shape", "box", (w*0.68*sc_t, 1.5, d*0.68*sc_t), "top", u=0, v=0, inset=0.25, c=wall_c, mat="Wood")
         else:
-            skin = c_main or ("#f8fafc" if "beluga" in ptoks else "#3b82f6")
-            P("Body", None, "raw", "sphere", (2.4 * jw, 2.0 * jh, 3.8 * jl), "center", c=skin)
-            P("Snout", "Body", "shape", "sphere", (1.8 * jw, 1.4 * jh, 1.8 * jl), "front", u=0, v=-0.08, inset=0.45, c=skin)
-            P("TailStock", "Body", "shape", "cone", (1.4 * jw, 2.0 * jl, 1.4 * jh), "back", u=0, v=0, inset=0.35, ro=(90, 0, 0), c=skin, joint=True)
-            P("TailFluke", "TailStock", "detail", "box", (2.4 * jw, 0.24, 0.95), "back", u=0, v=0, inset=0.15, c=skin, joint=True)
-            P("DorsalFin", "Body", "detail", "wedge", (0.28, 1.15, 1.25), "top", u=0, v=0.15, inset=0.12, c=skin)
-            P("FinR", "Body", "shape", "box", (1.45, 0.22, 0.85), "right", u=-0.2, v=-0.35, inset=0.15, ro=(0, 0, -20), c=skin, joint=True, mirror=True)
-            P("EyeR", "Snout", "detail", "sphere", (0.26, 0.26, 0.18), "right", u=-0.1, v=0.15, inset=0.04, c="#0f172a", mirror=True)
-            return {"category": "animal", "riggable": True, "parts": parts}, "Marine Modeler"
+            P("PitchedRoof", "MainWalls", "shape", "wedge", (w + 0.9, 2.2 * jh, d + 0.9), "top", u=0, v=0, inset=0.02, c=roof_c, mat="Slate")
+            P("ChimneyStack", "MainWalls", "shape", "box", (0.9, 2.5, 0.9), "top", u=0.58, v=0.35, inset=0.05, c="#78350f", mat="Brick")
 
-    # ---------------------------------------------------------------------
-    # DOMAIN H: WEAPONS & COMBAT GEAR
-    # ---------------------------------------------------------------------
-    if any(w in ptoks for w in (
-        "sword", "mastersword", "katana", "blade", "dagger", "claymore", "rapier", "scimitar",
-        "axe", "halberd", "scythe", "spear", "trident", "hammer", "warhammer", "mace", "bow",
-        "staff", "wand", "shield", "gun", "pistol", "rifle", "sniper", "shotgun", "blaster", "lasergun", "lightsaber"
-    )) or any(w in wtoks for w in ("weapon", "sword", "firearm", "rifle", "pistol", "polearm")):
-        is_gun = any(w in ptoks for w in ("gun", "pistol", "rifle", "sniper", "shotgun", "blaster", "lasergun")) or "firearm" in wtoks
-        is_pole = any(w in ptoks for w in ("axe", "halberd", "scythe", "spear", "trident", "hammer", "warhammer", "mace", "staff", "wand"))
+        P("EntryStairs", "Foundation", "detail", "box", (2.6, 0.48, 0.95), "front", u=0, v=-0.08, inset=0.05, c=trim_c, mat="Slate")
+        v_door = -1.0 + (2.2 / th)
+        P("DoorFrame", "MainWalls", "detail", "box", (1.95, 2.25, 0.24), "front", u=0, v=v_door, inset=0.04, c="#0f172a", mat="Metal")
+        P("DoorLeafR", "DoorFrame", "detail", "box", (0.78, 2.0, 0.12), "front", u=0.42, v=-0.04, inset=0.02, c="#78350f", mat="Wood", mirror=True)
+        P("EntryCanopy", "DoorFrame", "detail", "box", (2.55, 0.22, 1.05), "top", u=0, v=-0.45, inset=0.04, c=roof_c, mat="Metal")
+
+        for fl in range(floors):
+            vy = -1.0 + ((fl + 0.54) * 2.0 / floors)
+            for ux in (-0.64, 0.0, 0.64):
+                if fl == 0 and abs(ux) < 0.22:
+                    continue
+                for fc_s in ("front", "back"):
+                    wn = f"Win_{fc_s}_{fl}_{int((ux+1)*10)}"
+                    P(wn, "MainWalls", "detail", "box", (1.22, 1.38, 0.18), fc_s, u=ux, v=vy, inset=0.04, c="#0f172a", mat="Metal")
+                    P(wn + "_Glass", wn, "detail", "box", (1.02, 1.16, 0.08), fc_s, u=0, v=0, inset=0.01, c="#7dd3fc", mat="Glass", tr=0.35)
+        return {"category": "building", "riggable": False, "parts": parts}, "Architectural Multi-Story Modeler"
+
+    # =====================================================================
+    # 10. VEHICLES, AIRCRAFT & WATERCRAFT
+    # =====================================================================
+    if domain in ("vehicle", "aircraft", "watercraft"):
+        if domain == "watercraft":
+            hull_c = c_main or "#78350f"
+            P("Hull", None, "raw", "box", (2.6 * jw, 1.25 * jh, 5.4 * jl), "center", c=hull_c, mat="Wood")
+            P("BowProw", "Hull", "shape", "wedge", (2.5 * jw, 1.2 * jh, 1.6), "front", u=0, v=0, inset=0.05, ro=(-90, 0, 0), c=hull_c, mat="Wood")
+            P("DeckCabin", "Hull", "shape", "box", (2.0 * jw, 1.05, 1.85), "top", u=0, v=0.45, inset=0.04, c="#d6b88a", mat="Wood")
+            P("MainMast", "Hull", "shape", "cylinder", (0.28, 4.2 * jh, 0.28), "top", u=0, v=-0.15, inset=0.1, c="#5c2808", mat="Wood")
+            P("BillowingSail", "MainMast", "detail", "box", (2.8 * jw, 2.4 * jh, 0.18), "front", u=0, v=0.15, inset=0.02, c="#f8fafc", mat="Fabric")
+            return {"category": "watercraft", "riggable": False, "parts": parts}, "Naval Architecture Modeler"
+        if domain == "aircraft":
+            is_heli = any(w in ptoks for w in ("helicopter", "heli", "chopper", "drone"))
+            body_c = c_main or "#64748b"
+            if is_heli:
+                P("Fuselage", None, "raw", "sphere", (2.1 * jw, 1.75 * jh, 3.4 * jl), "center", c=body_c, mat="Metal")
+                P("CockpitGlass", "Fuselage", "shape", "sphere", (1.85 * jw, 1.35 * jh, 1.65 * jl), "front", u=0, v=0.05, inset=0.55, c="#38bdf8", mat="Glass", tr=0.3)
+                P("TailBoom", "Fuselage", "shape", "cylinder", (0.55, 2.9 * jl, 0.55), "back", u=0, v=0.18, inset=0.2, ro=(90, 0, 0), c=body_c, mat="Metal")
+                P("RotorMast", "Fuselage", "shape", "cylinder", (0.42, 0.55, 0.42), "top", u=0, v=0, inset=0.05, c="#1e293b", mat="Metal", joint=True)
+                P("RotorBlade1", "RotorMast", "detail", "box", (5.4 * jw, 0.10, 0.36), "top", u=0, v=0, inset=0.02, c="#0f172a", mat="Metal")
+                P("RotorBlade2", "RotorMast", "detail", "box", (0.36, 0.10, 5.4 * jw), "top", u=0, v=0, inset=0.02, c="#0f172a", mat="Metal")
+                P("SkidStrutR", "Fuselage", "shape", "cylinder", (0.18, 0.75, 0.18), "bot", u=0.65, v=0, inset=0.08, c="#1e293b", mat="Metal", mirror=True)
+                P("LandingSkidR", "SkidStrutR", "detail", "box", (0.22, 0.20, 3.2 * jl), "bot", u=0, v=0, inset=0.02, c="#1e293b", mat="Metal", mirror=True)
+            else:
+                P("Fuselage", None, "raw", "cylinder", (1.55 * jw, 5.2 * jl, 1.55 * jh), "center", ro=(90, 0, 0), c=body_c, mat="Metal")
+                P("NoseCone", "Fuselage", "shape", "sphere", (1.45 * jw, 1.35 * jh, 1.85), "front", u=0, v=0, inset=0.45, c="#2563eb", mat="Metal")
+                P("CanopyGlass", "Fuselage", "detail", "sphere", (1.15 * jw, 0.75, 2.1), "top", u=0, v=-0.35, inset=0.25, c="#38bdf8", mat="Glass", tr=0.28)
+                P("WingR", "Fuselage", "shape", "box", (3.8 * jw, 0.22, 1.45 * jl), "right", u=-0.05, v=0, inset=0.15, c=body_c, mat="Metal", mirror=True)
+                P("TailFin", "Fuselage", "shape", "wedge", (0.24, 1.45, 1.25), "top", u=0, v=0.78, inset=0.08, c="#2563eb", mat="Metal")
+            return {"category": "aircraft", "riggable": True, "parts": parts}, "Aerospace 3D Modeler"
+
+        # Ground Vehicle (Car / Tank / Truck)
+        is_tank = any(w in ptoks for w in ("tank", "panzer", "apc"))
+        body_c = c_main or ("#4d7c0f" if is_tank else "#dc2626")
+        W, H, L = (2.8 if is_tank else 2.4) * jw, 0.75 * jh, 5.2 * jl
+        P("Chassis", None, "raw", "box", (W, H, L), "center", c=body_c, mat="Metal")
+        if is_tank:
+            P("TurretBase", "Chassis", "shape", "box", (W * 0.78, 0.85, L * 0.48), "top", u=0, v=0.05, inset=0.04, c=body_c, mat="Metal", joint=True)
+            P("MainCannon", "TurretBase", "shape", "cylinder", (0.36, 3.4, 0.36), "front", u=0, v=0.05, inset=0.15, ro=(90, 0, 0), c="#1e293b", mat="Metal")
+            P("TrackR", "Chassis", "shape", "box", (0.55, 0.92, L * 0.96), "right", u=0, v=-0.22, inset=0.04, c="#0f172a", mat="Slate", mirror=True)
+        else:
+            P("Hood", "Chassis", "shape", "box", (W * 0.96, 0.36, L * 0.32), "top", u=0, v=-0.62, inset=0.02, c=body_c, mat="Metal")
+            P("CabinGlass", "Chassis", "shape", "box", (W * 0.86, 0.82, L * 0.42), "top", u=0, v=0.12, inset=0.02, c="#38bdf8", mat="Glass", tr=0.28)
+            P("RoofCap", "CabinGlass", "shape", "box", (W * 0.84, 0.16, L * 0.38), "top", u=0, v=0, inset=0.02, c=body_c, mat="Metal")
+            P("HeadlightR", "Chassis", "detail", "box", (0.48, 0.24, 0.12), "front", u=0.66, v=0.12, inset=0.02, c="#fef08a", mat="Neon", mirror=True)
+            for uz, tag in ((-0.62, "F"), (0.62, "B")):
+                P(f"Wheel{tag}R", "Chassis", "shape", "cylinder", (0.95, 0.50, 0.95), "right", u=uz, v=-0.28, inset=0.06, ro=(0, 0, 90), c="#0f172a", joint=True, mirror=True)
+            P("RearWing", "Chassis", "detail", "box", (W * 0.98, 0.14, 0.58), "top", u=0, v=0.90, inset=-0.35, c="#1e293b", mat="Metal")
+            P("SpoPostR", "Chassis", "detail", "box", (0.14, 0.45, 0.24), "top", u=0.62, v=0.88, inset=0.02, c="#1e293b", mat="Metal", mirror=True)
+        return {"category": "vehicle", "riggable": True, "parts": parts}, "Vehicle Engineering Modeler"
+
+    # =====================================================================
+    # 11. WEAPONS, FOLIAGE & PROPS
+    # =====================================================================
+    if domain == "weapon":
+        is_gun = any(w in ptoks for w in ("gun", "pistol", "rifle", "sniper", "shotgun", "blaster", "lasergun"))
         main_c = c_main or ("#334155" if is_gun else "#2563eb")
-        metal_c = c_sec or "#e2e8f0"
-
         if is_gun:
             P("Receiver", None, "raw", "box", (0.48 * jw, 0.82 * jh, 2.8 * jl), "center", c=main_c, mat="Metal")
-            P("Barrel", "Receiver", "shape", "cylinder", (0.28, 1.9 * jl, 0.28), "front", u=0, v=0.18, inset=0.08, ro=(90, 0, 0), c=metal_c, mat="Metal")
+            P("Barrel", "Receiver", "shape", "cylinder", (0.28, 1.9 * jl, 0.28), "front", u=0, v=0.18, inset=0.08, ro=(90, 0, 0), c="#e2e8f0", mat="Metal")
             P("MuzzleGlow", "Barrel", "detail", "cylinder", (0.32, 0.18, 0.32), "front", u=0, v=0, inset=0.02, ro=(90, 0, 0), c="#38bdf8", mat="Neon")
-            P("Grip", "Receiver", "shape", "box", (0.42, 1.05, 0.52), "bot", u=0, v=0.55, inset=0.05, ro=(16, 0, 0), c="#0f172a", mat="SmoothPlastic")
-            P("Magazine", "Receiver", "detail", "box", (0.36, 0.95, 0.48), "bot", u=0, v=-0.25, inset=0.05, ro=(-10, 0, 0), c="#1e293b", mat="Metal")
+            P("Grip", "Receiver", "shape", "box", (0.42, 1.05, 0.52), "bot", u=0, v=0.55, inset=0.05, ro=(16, 0, 0), c="#0f172a")
             P("OpticScope", "Receiver", "detail", "cylinder", (0.34, 1.25, 0.34), "top", u=0, v=0.1, inset=0.03, ro=(90, 0, 0), c="#0f172a", mat="Metal")
-            P("ScopeLens", "OpticScope", "detail", "sphere", (0.30, 0.30, 0.12), "front", u=0, v=0, inset=0.02, c="#ef4444", mat="Neon")
-            P("Stock", "Receiver", "shape", "box", (0.44, 0.72, 1.35), "back", u=0, v=-0.1, inset=0.04, c="#1e293b", mat="SmoothPlastic")
-        elif is_pole:
-            P("Shaft", None, "raw", "cylinder", (0.34, 4.4 * jl, 0.34), "center", c="#78350f", mat="Wood")
-            P("Collar", "Shaft", "shape", "cylinder", (0.48, 0.45, 0.48), "top", u=0, v=0, inset=0.04, c="#d4af37", mat="Metal")
-            if "hammer" in prompt or "mace" in ptoks:
-                P("HammerHead", "Collar", "shape", "box", (1.85, 0.95, 0.95), "top", u=0, v=0, inset=0.04, c=metal_c, mat="Metal")
-            else:
-                P("AxeBladeR", "Collar", "detail", "wedge", (1.25, 1.35, 0.22), "right", u=0, v=0, inset=0.05, c=metal_c, mat="Metal", mirror=True)
-                P("SpearTip", "Collar", "detail", "cone", (0.46, 1.15, 0.46), "top", u=0, v=0, inset=0.03, c=metal_c, mat="Metal")
         else:
             P("HiltGrip", None, "raw", "cylinder", (0.36, 1.35, 0.36), "center", c=main_c, mat="Metal")
             P("Pommel", "HiltGrip", "shape", "sphere", (0.54, 0.54, 0.54), "bot", u=0, v=0, inset=0.04, c="#eab308", mat="Metal")
             P("CrossGuard", "HiltGrip", "shape", "box", (1.85, 0.36, 0.52), "top", u=0, v=0, inset=0.02, c=main_c, mat="Metal")
             P("GuardGem", "CrossGuard", "detail", "sphere", (0.38, 0.38, 0.28), "front", u=0, v=0, inset=0.02, c="#eab308", mat="Neon")
-            P("Blade", "CrossGuard", "shape", "box", (0.56, 3.8 * jl, 0.16), "top", u=0, v=0, inset=0.02, c=metal_c, mat="Metal")
-            P("BladeTip", "Blade", "detail", "cone", (0.56, 0.85, 0.16), "top", u=0, v=0, inset=0.02, c=metal_c, mat="Metal")
+            P("Blade", "CrossGuard", "shape", "box", (0.56, 3.8 * jl, 0.16), "top", u=0, v=0, inset=0.02, c="#e2e8f0", mat="Metal")
+            P("BladeTip", "Blade", "detail", "cone", (0.56, 0.85, 0.16), "top", u=0, v=0, inset=0.02, c="#e2e8f0", mat="Metal")
         return {"category": "weapon", "riggable": False, "parts": parts}, "Weaponry 3D Modeler"
 
-    # ---------------------------------------------------------------------
-    # DOMAIN I: FOLIAGE & NATURE
-    # ---------------------------------------------------------------------
-    if any(w in ptoks for w in (
-        "tree", "pine", "oak", "palm", "sakura", "cherryblossom", "cactus", "bush", "plant", "flower", "rose", "mushroom", "toadstool"
-    )) or any(w in wtoks for w in ("tree", "plant", "fungus", "mushroom", "cactus", "flora")):
-        if "mushroom" in ptoks or "toadstool" in ptoks or "fungus" in wtoks:
-            cap_c = c_main or "#dc2626"
-            P("Stem", None, "raw", "cylinder", (1.25 * jw, 2.2 * jh, 1.25 * jw), "center", c="#fef3c7")
-            P("CapDome", "Stem", "shape", "sphere", (3.6 * jw, 1.65 * jh, 3.6 * jl), "top", u=0, v=0, inset=0.35, c=cap_c)
-            for ui, vi in ((-0.45, -0.45), (0.45, -0.45), (-0.45, 0.45), (0.45, 0.45), (0, 0)):
-                P(f"Spot_{int((ui+1)*10)}_{int((vi+1)*10)}", "CapDome", "detail", "sphere", (0.52, 0.28, 0.52), "top", u=ui, v=vi, inset=0.06, c="#ffffff")
-        elif "cactus" in ptoks or "cactus" in wtoks:
-            c_green = c_main or "#16a34a"
-            P("MainStem", None, "raw", "cylinder", (1.2 * jw, 3.8 * jh, 1.2 * jw), "center", c=c_green, mat="Grass")
-            P("TopDome", "MainStem", "shape", "sphere", (1.2 * jw, 0.8, 1.2 * jw), "top", u=0, v=0, inset=0.25, c=c_green, mat="Grass")
-            P("BranchArmR", "MainStem", "shape", "box", (0.95, 0.65, 0.65), "right", u=0, v=0.15, inset=0.06, c=c_green, mat="Grass", mirror=True)
-            P("BranchUpR", "BranchArmR", "detail", "cylinder", (0.68, 1.45, 0.68), "top", u=0.35, v=0, inset=0.06, c=c_green, mat="Grass", mirror=True)
-        else:
-            leaf_c = c_main or ("#f472b6" if "sakura" in ptoks or "cherry" in prompt else "#16a34a")
-            P("Trunk", None, "raw", "cylinder", (1.15 * jw, 2.8 * jh, 1.15 * jw), "center", c="#78350f", mat="Wood")
-            P("RootFlare", "Trunk", "shape", "cone", (1.75 * jw, 0.65, 1.75 * jw), "bot", u=0, v=0, inset=0.25, c="#78350f", mat="Wood")
-            par = "Trunk"
-            for i in range(3):
-                cw_s = (3.8 - i * 0.85) * jw
-                shp = "cone" if "pine" in ptoks else "sphere"
-                par = f"Canopy{i}"
-                P(par, "Trunk" if i == 0 else f"Canopy{i-1}", "shape" if i < 2 else "detail", shp, (cw_s, 1.55 * jh, cw_s), "top", u=0, v=0, inset=0.35, c=leaf_c, mat="Grass")
+    if domain == "foliage":
+        leaf_c = c_main or ("#f472b6" if "sakura" in ptoks else "#16a34a")
+        P("Trunk", None, "raw", "cylinder", (1.15 * jw, 2.8 * jh, 1.15 * jw), "center", c="#78350f", mat="Wood")
+        for i in range(3):
+            cw_s = (3.8 - i * 0.85) * jw
+            P(f"Canopy{i}", "Trunk" if i == 0 else f"Canopy{i-1}", "shape", "sphere", (cw_s, 1.55 * jh, cw_s), "top", u=0, v=0, inset=0.35, c=leaf_c, mat="Grass")
         return {"category": "foliage", "riggable": False, "parts": parts}, "Botanical 3D Modeler"
 
-    # ---------------------------------------------------------------------
-    # DOMAIN J: FURNITURE, ELECTRONICS & PROPS
-    # ---------------------------------------------------------------------
-    if any(w in ptoks for w in (
-        "chair", "throne", "sofa", "couch", "table", "desk", "bed", "chest", "treasure", "crate",
-        "barrel", "lamp", "lantern", "tv", "monitor", "computer", "pc", "laptop", "arcade",
-        "burger", "hamburger", "pizza", "cake", "potion", "trophy", "chalice", "guitar", "piano", "snowman"
-    )) or any(w in wtoks for w in ("furniture", "appliance", "food", "dish", "sandwich", "beverage", "instrument", "container")):
-        if "snowman" in ptoks:
-            P("BaseSnowball", None, "raw", "sphere", (2.6 * jw, 2.2 * jh, 2.6 * jl), "center", c="#f8fafc")
-            P("MidSnowball", "BaseSnowball", "shape", "sphere", (2.0 * jw, 1.7 * jh, 2.0 * jl), "top", u=0, v=0, inset=0.35, c="#f8fafc")
-            P("HeadSnowball", "MidSnowball", "shape", "sphere", (1.4 * jw, 1.3 * jh, 1.4 * jl), "top", u=0, v=0, inset=0.25, c="#f8fafc", joint=True)
-            P("CarrotNose", "HeadSnowball", "detail", "cone", (0.24, 0.75, 0.24), "front", u=0, v=0, inset=0.05, ro=(-90, 0, 0), c="#ea580c")
-            P("CoalEyeR", "HeadSnowball", "detail", "sphere", (0.18, 0.18, 0.12), "front", u=0.35, v=0.25, inset=0.02, c="#0f172a", mirror=True)
-            P("TopHatBrim", "HeadSnowball", "detail", "cylinder", (1.5, 0.14, 1.5), "top", u=0, v=0, inset=0.1, c="#1e293b")
-            P("TopHatCrown", "TopHatBrim", "detail", "cylinder", (1.05, 0.95, 1.05), "top", u=0, v=0, inset=0.02, c="#1e293b")
-            P("BranchArmR", "MidSnowball", "detail", "cylinder", (0.16, 1.65, 0.16), "right", u=0, v=0.15, inset=0.1, ro=(0, 0, 65), c="#78350f", mat="Wood", mirror=True)
-            return {"category": "prop", "riggable": True, "parts": parts}, "Prop & Character Modeler"
-        if any(w in ptoks for w in ("burger", "hamburger", "sandwich", "cake", "pie", "pizza")):
-            P("BottomBun", None, "raw", "cylinder", (2.6 * jw, 0.55, 2.6 * jl), "center", c="#d97706")
-            P("MeatPatty", "BottomBun", "shape", "cylinder", (2.75 * jw, 0.52, 2.75 * jl), "top", u=0, v=0, inset=0.03, c="#5c2808", mat="Slate")
-            P("CheeseSlice", "MeatPatty", "detail", "box", (2.55 * jw, 0.14, 2.55 * jl), "top", u=0, v=0, inset=0.02, ro=(0, 45, 0), c="#facc15")
-            P("TomatoLayer", "CheeseSlice", "detail", "cylinder", (2.35 * jw, 0.22, 2.35 * jl), "top", u=0, v=0, inset=0.02, c="#dc2626")
-            P("LettuceRing", "TomatoLayer", "detail", "cylinder", (2.68 * jw, 0.20, 2.68 * jl), "top", u=0, v=0, inset=0.02, c="#16a34a")
-            P("TopBun", "LettuceRing", "shape", "sphere", (2.65 * jw, 1.15, 2.65 * jl), "top", u=0, v=0, inset=0.28, c="#d97706")
-        elif any(w in ptoks for w in ("tv", "monitor", "computer", "pc", "laptop", "arcade")):
-            P("StandBase", None, "raw", "box", (1.6 * jw, 0.24, 1.2 * jl), "center", c="#1e293b", mat="Metal")
-            P("StandNeck", "StandBase", "shape", "cylinder", (0.36, 0.75, 0.36), "top", u=0, v=-0.2, inset=0.03, c="#334155", mat="Metal")
-            P("MonitorFrame", "StandNeck", "raw", "box", (3.6 * jw, 2.2 * jh, 0.28), "top", u=0, v=0, inset=0.04, c="#0f172a", mat="Metal")
-            P("DisplayScreen", "MonitorFrame", "detail", "box", (3.32 * jw, 1.92 * jh, 0.08), "front", u=0, v=0, inset=0.01, c=c_main or "#38bdf8", mat="Neon")
-        elif any(w in ptoks for w in ("table", "desk")):
-            P("TableTop", None, "raw", "box", (3.8 * jw, 0.32, 2.4 * jl), "center", c=c_main or "#78350f", mat="Wood")
-            for vz, zt in ((-0.82, "F"), (0.82, "B")):
-                P(f"Leg{zt}R", "TableTop", "shape", "cylinder", (0.28, 1.85 * jh, 0.28), "bot", u=0.82, v=vz, inset=0.04, c="#1e293b", mat="Metal", mirror=True)
-        else:
-            c_wood = c_main or "#78350f"
-            P("SeatCushion", None, "raw", "box", (2.1 * jw, 0.36, 2.0 * jl), "center", c=c_wood, mat="Wood")
-            P("Backrest", "SeatCushion", "shape", "box", (2.1 * jw, 2.3 * jh, 0.34), "back", u=0, v=0.85, inset=0.04, c=c_wood, mat="Wood")
-            P("ArmrestR", "SeatCushion", "detail", "box", (0.30, 0.72, 1.85 * jl), "right", u=0, v=0.55, inset=0.04, c="#d4af37", mat="Metal", mirror=True)
-            for vz, zt in ((-0.78, "F"), (0.78, "B")):
-                P(f"ChairLeg{zt}R", "SeatCushion", "shape", "cylinder", (0.28, 1.35, 0.28), "bot", u=0.78, v=vz, inset=0.04, c="#1e293b", mat="Metal", mirror=True)
-        return {"category": "prop", "riggable": False, "parts": parts}, "Prop & Industrial Modeler"
+    if domain == "prop":
+        P("BottomBun", None, "raw", "cylinder", (2.6 * jw, 0.55, 2.6 * jl), "center", c="#d97706")
+        P("MeatPatty", "BottomBun", "shape", "cylinder", (2.75 * jw, 0.52, 2.75 * jl), "top", u=0, v=0, inset=0.03, c="#5c2808", mat="Slate")
+        P("CheeseSlice", "MeatPatty", "detail", "box", (2.55 * jw, 0.14, 2.55 * jl), "top", u=0, v=0, inset=0.02, ro=(0, 45, 0), c="#facc15")
+        P("LettuceRing", "CheeseSlice", "detail", "cylinder", (2.68 * jw, 0.20, 2.68 * jl), "top", u=0, v=0, inset=0.02, c="#16a34a")
+        P("TopBun", "LettuceRing", "shape", "sphere", (2.65 * jw, 1.15, 2.65 * jl), "top", u=0, v=0, inset=0.28, c="#d97706")
+        return {"category": "prop", "riggable": False, "parts": parts}, "Prop & Food Modeler"
 
-    # ---------------------------------------------------------------------
-    # DOMAIN K: HUMANOIDS, HEROES, ROBOTS & MECHS
-    # ---------------------------------------------------------------------
+    # =====================================================================
+    # 12. HUMANOIDS, HEROES & MECHS
+    # =====================================================================
     is_mech = any(w in ptoks for w in ("mech", "mecha", "gundam", "robot", "cyborg", "exosuit", "golem", "titan"))
-    is_astro = any(w in ptoks for w in ("astronaut", "spaceman", "cosmonaut"))
-    is_martial = any(w in ptoks for w in ("ryu", "karate", "fighter", "ninja", "samurai", "monk", "boxer"))
-    is_knight = any(w in ptoks for w in ("knight", "paladin", "warrior", "king", "queen", "viking", "soldier"))
-
-    suit_c = c_main or ("#f8fafc" if is_astro or "ryu" in ptoks or "karate" in ptoks else ("#94a3b8" if is_knight else ("#2563eb" if is_mech else rng.choice(["#dc2626", "#2563eb", "#16a34a", "#7c3aed", "#ea580c"]))))
-    acc_c = c_sec or ("#dc2626" if is_martial or is_astro else "#eab308")
-    skin_c = "#cbd5e1" if is_mech else rng.choice(["#f2c9a0", "#e0ac7e", "#c68863"])
-    pants_c = "#f8fafc" if (is_astro or "ryu" in ptoks or "karate" in ptoks) else "#1e293b"
-
+    suit_c = c_main or ("#2563eb" if is_mech else "#dc2626")
+    skin_c = "#cbd5e1" if is_mech else "#f2c9a0"
     cw, ch, lh = (2.2 if is_mech else 1.75) * jw, (2.1 if is_mech else 1.85) * jh, (1.65 if is_mech else 1.35) * jl
-    P("HumanoidRootPart", None, "raw", "box", (cw * 0.92, 0.55, 0.96), "center", c=pants_c)
-    P("Torso", "HumanoidRootPart", "raw", "box", (cw, ch, 1.02), "top", u=0, v=0, inset=0.02, c=suit_c, mat="Metal" if is_mech or is_knight else "SmoothPlastic", joint=True)
+
+    P("HumanoidRootPart", None, "raw", "box", (cw * 0.92, 0.55, 0.96), "center", c="#1e293b")
+    P("Torso", "HumanoidRootPart", "raw", "box", (cw, ch, 1.02), "top", u=0, v=0, inset=0.02, c=suit_c, mat="Metal" if is_mech else "SmoothPlastic", joint=True)
     P("Neck", "Torso", "raw", "cylinder", (0.48, 0.26, 0.48), "top", u=0, v=0, inset=0.02, c=skin_c, joint=True)
     P("Head", "Neck", "raw", "box" if is_mech else "sphere", (1.24, 1.24, 1.20), "top", u=0, v=0, inset=0.04, c=skin_c, joint=True)
-
-    P("Belt", "HumanoidRootPart", "detail", "box", (cw * 0.96, 0.24, 1.04), "top", u=0, v=0, inset=0.12, c="#0f172a")
-    P("ChestArmor", "Torso", "detail", "box", (cw * 0.74, ch * 0.50, 0.18), "front", u=0, v=0.15, inset=0.02, c=acc_c if is_mech else "#cbd5e1", mat="Metal" if is_knight or is_mech else "SmoothPlastic")
-    if is_mech or is_astro:
-        P("CoreReactor", "ChestArmor", "detail", "sphere", (0.42, 0.42, 0.18), "front", u=0, v=0, inset=0.02, c="#38bdf8", mat="Neon")
-        P("BackPack", "Torso", "shape", "box", (cw * 0.72, ch * 0.68, 0.52), "back", u=0, v=0.08, inset=0.03, c="#cbd5e1", mat="Metal")
-
-    P("ThighR", "HumanoidRootPart", "shape", "box", (0.68, lh, 0.72), "bot", u=0.52, v=0, inset=0.02, c=pants_c, joint=True, mirror=True)
-    P("ShinR", "ThighR", "shape", "box", (0.60, lh, 0.64), "bot", u=0, v=0, inset=0.02, c=pants_c, joint=True, mirror=True)
-    P("BootR", "ShinR", "detail", "box", (0.66, 0.38, 1.05), "bot", u=0, v=-0.18, inset=0.02, c=skin_c if is_martial else "#0f172a", mirror=True)
-
-    P("ShoulderPadR", "Torso", "detail", "sphere" if not is_mech else "box", (0.72, 0.52, 0.75), "right", u=0, v=0.72, inset=0.08, c=acc_c, mat="Metal" if is_knight or is_mech else "SmoothPlastic", mirror=True)
-    P("ArmR", "Torso", "shape", "box", (0.58, lh * 0.85, 0.60), "right", u=0, v=0.22, inset=0.02, c=skin_c if is_martial else suit_c, joint=True, mirror=True)
+    P("ChestArmor", "Torso", "detail", "box", (cw * 0.74, ch * 0.50, 0.18), "front", u=0, v=0.15, inset=0.02, c="#eab308" if is_mech else "#cbd5e1", mat="Metal")
+    P("ThighR", "HumanoidRootPart", "shape", "box", (0.68, lh, 0.72), "bot", u=0.52, v=0, inset=0.02, c="#1e293b", joint=True, mirror=True)
+    P("ShinR", "ThighR", "shape", "box", (0.60, lh, 0.64), "bot", u=0, v=0, inset=0.02, c="#1e293b", joint=True, mirror=True)
+    P("BootR", "ShinR", "detail", "box", (0.66, 0.38, 1.05), "bot", u=0, v=-0.18, inset=0.02, c="#0f172a", mirror=True)
+    P("ArmR", "Torso", "shape", "box", (0.58, lh * 0.85, 0.60), "right", u=0, v=0.22, inset=0.02, c=suit_c, joint=True, mirror=True)
     P("ForearmR", "ArmR", "shape", "box", (0.50, lh * 0.80, 0.52), "bot", u=0, v=0, inset=0.02, c=skin_c, joint=True, mirror=True)
-    P("HandR", "ForearmR", "detail", "sphere", (0.50, 0.50, 0.50), "bot", u=0, v=0, inset=0.04, c=acc_c if is_martial else skin_c, joint=True, mirror=True)
-
+    P("HandR", "ForearmR", "detail", "sphere", (0.50, 0.50, 0.50), "bot", u=0, v=0, inset=0.04, c=skin_c, joint=True, mirror=True)
     P("EyeR", "Head", "detail", "sphere", (0.24, 0.26, 0.12), "front", u=0.38, v=0.12, inset=0.02, c="#38bdf8" if is_mech else "#0f172a", mat="Neon" if is_mech else "SmoothPlastic", mirror=True)
-    if is_astro or is_mech:
-        P("Visor", "Head", "detail", "box", (1.04, 0.56, 0.16), "front", u=0, v=0.08, inset=0.02, c="#eab308", mat="Glass", tr=0.2)
-    else:
-        P("HairCap", "Head", "detail", "sphere", (1.28, 0.68, 1.24), "top", u=0, v=0, inset=0.26, c="#2b1d12")
-        if is_martial:
-            P("Headband", "Head", "detail", "box", (1.26, 0.22, 1.22), "front", u=0, v=0.38, inset=1.18, c=acc_c)
-        if "king" in ptoks or "queen" in ptoks or "crown" in prompt:
-            P("RoyalCrown", "Head", "detail", "cylinder", (0.95, 0.34, 0.95), "top", u=0, v=0, inset=0.05, c="#eab308", mat="Metal")
-
-    if any(w in ptoks for w in ("sword", "katana", "blade", "knight", "samurai")):
-        P("HeldHilt", "HandR", "detail", "cylinder", (0.20, 0.85, 0.20), "front", u=0, v=0, inset=0.05, ro=(90, 0, 0), c="#1e293b", mat="Metal")
-        P("HeldBlade", "HeldHilt", "detail", "box", (0.14, 0.26, 2.45), "front", u=0, v=0, inset=0.02, c="#38bdf8", mat="Neon")
-    if is_astro or "flag" in ptoks:
-        P("FlagPole", "HandL", "detail", "cylinder", (0.18, 4.0, 0.18), "front", u=0, v=0.8, inset=0.05, c="#cbd5e1", mat="Metal")
-        P("FlagBanner", "FlagPole", "detail", "box", (1.65, 1.0, 0.12), "left", u=0, v=0.68, inset=0.02, c="#dc2626")
-
     return {"category": "humanoid", "riggable": True, "parts": parts}, "Character & Mech Modeler"
 
 # =========================================================================
-# 5. STAGE 6: SURFACE SOCKET COMPILER + 3D BOUNDING-BOX CRITIC & REPAIR LOOP
+# 5. STAGE 6: HYBRID COMPILER (Supports Direct `po` AND Surface `attach` + 3D Critic)
 # =========================================================================
 def compile_and_repair_3d_model(bp, scale=1.0):
     raw_list = bp.get("parts") or []
@@ -818,7 +1032,7 @@ def compile_and_repair_3d_model(bp, scale=1.0):
         sz_in = item.get("sz") or [1, 1, 1]
         if not isinstance(sz_in, (list, tuple)) or len(sz_in) < 3:
             sz_in = [1, 1, 1]
-        sz = [round(clamp(float(v), 0.05, 30.0) * scale, 3) for v in sz_in[:3]]
+        sz = [round(clamp(float(v), 0.05, 35.0) * scale, 3) for v in sz_in[:3]]
 
         ro_in = item.get("ro") or [0, 0, 0]
         if not isinstance(ro_in, (list, tuple)) or len(ro_in) < 3:
@@ -832,22 +1046,22 @@ def compile_and_repair_3d_model(bp, scale=1.0):
         if is_mirror and face in ("right", "left"):
             face = "left" if face == "right" else "right"
 
-        u = clamp(float(att.get("u", 0.0)), -1.0, 1.0)
-        if is_mirror and face not in ("right", "left"):
-            u = -u
-        v = clamp(float(att.get("v", 0.0)), -1.0, 1.0)
-        inset = clamp(float(att.get("inset", 0.03)), -0.5, 2.0) * scale
+        # Support direct world `po` coordinates (used by splines & LLMs) OR surface `attach`
+        if isinstance(item.get("po"), (list, tuple)) and len(item["po"]) >= 3:
+            wx = (-float(item["po"][0]) if is_mirror else float(item["po"][0])) * scale
+            wy = float(item["po"][1]) * scale
+            wz = float(item["po"][2]) * scale
+        elif p_name and p_name in idx:
+            u = clamp(float(att.get("u", 0.0)), -1.0, 1.0)
+            if is_mirror and face not in ("right", "left"):
+                u = -u
+            v = clamp(float(att.get("v", 0.0)), -1.0, 1.0)
+            inset = clamp(float(att.get("inset", 0.03)), -0.5, 2.0) * scale
 
-        if p_name and p_name in idx:
             par = idx[p_name]
             px, py, pz = par["po"]
             pw, ph, pd = rot_dims(par["sz"], par["ro"])
             cw, ch, cd = rot_dims(sz, ro)
-
-            if item.get("stage") == "detail" and cw > pw * 2.2 and ch > ph * 2.2:
-                sz = [round(sz[0] * 0.5, 3), round(sz[1] * 0.5, 3), round(sz[2] * 0.5, 3)]
-                cw, ch, cd = rot_dims(sz, ro)
-
             f = FACES.get(face, (0, 1, 0))
             if face in ("front", "back"):
                 wx = px + u * (pw * 0.44)
@@ -864,7 +1078,7 @@ def compile_and_repair_3d_model(bp, scale=1.0):
             else:
                 wx, wy, wz = px + u * (pw * 0.35), py + v * (ph * 0.35), pz
         else:
-            wx, wy, wz = 0.0, 2.5, 0.0
+            wx, wy, wz = 0.0, 2.5 * scale, 0.0
 
         color_str = str(item.get("c") or "#cccccc")
         if color_str.lower() in NAMED_COLORS:
@@ -892,6 +1106,7 @@ def compile_and_repair_3d_model(bp, scale=1.0):
             if item.get("mirror"):
                 emit_part(item, is_mirror=True)
 
+    # Iterative 3D AABB Connectivity Critic (Fixes floating or buried parts)
     total_repairs = 0
     for iteration in range(1, 6):
         fixes_this_pass = 0
@@ -908,22 +1123,10 @@ def compile_and_repair_3d_model(bp, scale=1.0):
             dy = max(0.0, abs(cy - py) - (ph / 2.0 + ch / 2.0))
             dz = max(0.0, abs(cz - pz) - (pd / 2.0 + cd / 2.0))
             gap = math.sqrt(dx*dx + dy*dy + dz*dz)
-            if gap > 0.02:
+            if gap > 0.03:
                 if dx > 0: cx += (-1.0 if cx > px else 1.0) * (dx + 0.015)
                 if dy > 0: cy += (-1.0 if cy > py else 1.0) * (dy + 0.015)
                 if dz > 0: cz += (-1.0 if cz > pz else 1.0) * (dz + 0.015)
-                p["po"] = [round(cx, 3), round(cy, 3), round(cz, 3)]
-                fixes_this_pass += 1
-                total_repairs += 1
-
-            in_x = (abs(cx - px) + cw / 2.0) < (pw / 2.0 - 0.01)
-            in_y = (abs(cy - py) + ch / 2.0) < (ph / 2.0 - 0.01)
-            in_z = (abs(cz - pz) + cd / 2.0) < (pd / 2.0 - 0.01)
-            if in_x and in_y and in_z and p.get("stage") == "detail":
-                f = FACES.get(p.get("face", "front"), (0, 0, -1))
-                if f[2] != 0: cz = pz + f[2] * (pd / 2.0 + cd / 2.0 - 0.015)
-                elif f[0] != 0: cx = px + f[0] * (pw / 2.0 + cw / 2.0 - 0.015)
-                else: cy = py + (1.0 if cy >= py else -1.0) * (ph / 2.0 + ch / 2.0 - 0.015)
                 p["po"] = [round(cx, 3), round(cy, 3), round(cz, 3)]
                 fixes_this_pass += 1
                 total_repairs += 1
@@ -937,7 +1140,7 @@ def compile_and_repair_3d_model(bp, scale=1.0):
         else:
             logs.append({
                 "stage": f"6_critic_rework_{iteration}",
-                "msg": f"Pass #{iteration}: Found {fixes_this_pass} misaligned/floating details -> re-solved surface coordinates"
+                "msg": f"Pass #{iteration}: Found {fixes_this_pass} detached/misaligned details -> clamped to parent surface"
             })
 
     if compiled:
@@ -1072,18 +1275,21 @@ def export_obj(spec):
 def run_autonomous_pipeline(prompt, seed=7, api_key=""):
     t0 = time.time()
     logs = []
+    scale_mult = extract_scale_factor(prompt)
 
     subject, wiki_summary = search_internet_knowledge(prompt)
-    logs.append({"stage": "1_check_prompt", "msg": f"Analyzed prompt '{prompt}' -> Primary subject: '{subject}'"})
+    logs.append({"stage": "1_check_prompt", "msg": f"Analyzed prompt '{prompt}' -> Primary subject: '{subject}' (scale={scale_mult:.2f}x)"})
 
     if wiki_summary:
         logs.append({"stage": "2_internet_search", "msg": f"Wikipedia Lookup: {wiki_summary[:140]}..."})
     else:
         logs.append({"stage": "2_internet_search", "msg": f"Direct semantic features extracted for '{subject}'"})
 
-    bp, engine_used = call_cloud_llm_architect(prompt, wiki_summary, seed, api_key=api_key)
+    bp, engine_used, llm_err = call_cloud_llm_architect(prompt, wiki_summary, seed, api_key=api_key)
     if not bp:
         bp, engine_used = synthesize_from_semantics_and_wiki(prompt, subject, wiki_summary, seed)
+        if llm_err and api_key:
+            logs.append({"stage": "2b_llm_notice", "msg": f"Note: Custom key fallback ({llm_err}) -> used {engine_used}"})
 
     raw_cnt = sum(1 for p in bp["parts"] if p.get("stage") == "raw")
     shp_cnt = sum(1 for p in bp["parts"] if p.get("stage") == "shape")
@@ -1092,7 +1298,7 @@ def run_autonomous_pipeline(prompt, seed=7, api_key=""):
     logs.append({"stage": "4_shape_sculpting", "msg": f"Sculpted {shp_cnt} structural/anatomical shapes"})
     logs.append({"stage": "5_detail_pass", "msg": f"Added {det_cnt} surface-socketed details"})
 
-    compiled, critic_logs, repairs = compile_and_repair_3d_model(bp, scale=1.0)
+    compiled, critic_logs, repairs = compile_and_repair_3d_model(bp, scale=scale_mult)
     logs.extend(critic_logs)
 
     mats_used = sorted({p.get("mat", "SmoothPlastic") for p in compiled})
@@ -1131,7 +1337,7 @@ def build_one(prompt, seed=7, var=0, feat=None):
     return spec, {"root": spec["archetype"]}
 
 def generate(body, mem=None):
-    prompt = (body.get("prompt") or "orange tabby cat").strip()
+    prompt = (body.get("prompt") or "build me a giant serpent").strip()
     it = int(body.get("iteration", 0))
     nonce = str(body.get("nonce") or time.time())
     api_key = str(body.get("api_key") or "").strip()
@@ -1176,7 +1382,7 @@ HTML_UI = r"""<!DOCTYPE html>
   .bottom-panel { background: var(--panel); border-top: 1px solid var(--border); padding: 10px 16px 14px; display: flex; gap: 8px; align-items: center; }
   #promptInput { flex: 1; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border); font-size: 14px; background: #11141c; color: #fff; outline: none; }
   #promptInput:focus { border-color: var(--accent); }
-  #apiKeyInput { width: 190px; padding: 10px 10px; border-radius: 10px; border: 1px solid var(--border); font-size: 12px; background: #11141c; color: #94a3b8; outline: none; }
+  #apiKeyInput { width: 200px; padding: 10px 10px; border-radius: 10px; border: 1px solid var(--border); font-size: 12px; background: #11141c; color: #94a3b8; outline: none; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -1185,19 +1391,19 @@ HTML_UI = r"""<!DOCTYPE html>
 
 <div class="topbar">
   <span class="brand">ROBLOX CLOUD 3D AI</span>
+  <button class="pill" onclick="runPrompt('build me a giant serpent')">Giant Serpent</button>
   <button class="pill" onclick="runPrompt('orange tabby cat')">Cat</button>
-  <button class="pill" onclick="runPrompt('husky dog')">Husky Dog</button>
+  <button class="pill" onclick="runPrompt('charizard fire dragon')">Charizard Dragon</button>
+  <button class="pill" onclick="runPrompt('trex dinosaur')">T-Rex Dino</button>
+  <button class="pill" onclick="runPrompt('black widow spider')">Spider</button>
+  <button class="pill" onclick="runPrompt('emperor scorpion')">Scorpion</button>
   <button class="pill" onclick="runPrompt('modern two story cafe building')">Cafe Building</button>
   <button class="pill" onclick="runPrompt('japanese red pagoda temple')">Pagoda Temple</button>
   <button class="pill" onclick="runPrompt('medieval stone castle')">Stone Castle</button>
   <button class="pill" onclick="runPrompt('red sports car')">Sports Car</button>
   <button class="pill" onclick="runPrompt('military attack helicopter')">Helicopter</button>
-  <button class="pill" onclick="runPrompt('armored battle tank')">Battle Tank</button>
+  <button class="pill" onclick="runPrompt('pirate galleon ship')">Pirate Ship</button>
   <button class="pill" onclick="runPrompt('purple kraken octopus')">Kraken</button>
-  <button class="pill" onclick="runPrompt('phoenix fire bird')">Phoenix</button>
-  <button class="pill" onclick="runPrompt('magical unicorn horse')">Unicorn</button>
-  <button class="pill" onclick="runPrompt('sci-fi plasma rifle blaster')">Plasma Rifle</button>
-  <button class="pill" onclick="runPrompt('cheeseburger food')">Cheeseburger</button>
   <button class="pill" onclick="runPrompt('gundam mech robot')">Gundam Mech</button>
 </div>
 
@@ -1235,21 +1441,24 @@ HTML_UI = r"""<!DOCTYPE html>
 </div>
 
 <div class="bottom-panel">
-  <input type="text" id="promptInput" placeholder='Type ANY object, animal, vehicle, building, or character...' onkeydown="if(event.key==='Enter') generateNew()" />
-  <input type="password" id="apiKeyInput" placeholder="Optional Gemini/Groq Key" title="Works keylessly by default, or paste a Gemini (AIza...) or Groq (gsk_...) key for dedicated LLM speed" />
+  <input type="text" id="promptInput" placeholder='Type ANY creature, serpent, dragon, building, vehicle, or prop...' onkeydown="if(event.key==='Enter') generateNew()" />
+  <input type="password" id="apiKeyInput" placeholder="Groq (gsk_...) or Gemini Key" oninput="localStorage.setItem('rbx_ai_key', this.value)" />
   <button class="btn-sm" onclick="reRoll()">Re-Roll</button>
   <button class="btn-sm primary" style="padding:10px 16px;font-size:13px;" onclick="generateNew()">Build 3D Asset</button>
 </div>
 
 <script>
 let scene, camera, renderer, controls, modelGroup, currentSpec = null;
-let currentPrompt = "orange tabby cat", currentIter = 0, viewStage = "final";
+let currentPrompt = "build me a giant serpent", currentIter = 0, viewStage = "final";
 
 function init3D() {
+  const savedKey = localStorage.getItem("rbx_ai_key");
+  if (savedKey) document.getElementById("apiKeyInput").value = savedKey;
+
   const canvas = document.getElementById("viewport");
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(40, canvas.clientWidth / canvas.clientHeight, 0.1, 500);
-  camera.position.set(7.5, 5.8, -9.5);
+  camera.position.set(8.5, 6.2, -10.5);
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setSize(canvas.clientWidth, canvas.clientHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -1351,7 +1560,7 @@ function renderSpec(spec) {
     </div>
   `).join("");
 
-  controls.target.set(0, Math.max(1.2, b[1] * 0.45), 0);
+  controls.target.set(0, Math.max(1.2, b[1] * 0.42), 0);
   controls.update();
 }
 
@@ -1388,7 +1597,7 @@ function downloadFile(ext) {
   const blob = new Blob([ext === "obj" ? currentSpec.obj : currentSpec.lua], { type: "text/plain" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${currentSpec.name || "asset"}.${ext}`; a.click();
 }
-window.addEventListener("DOMContentLoaded", () => { init3D(); runPrompt("orange tabby cat"); });
+window.addEventListener("DOMContentLoaded", () => { init3D(); runPrompt("build me a giant serpent"); });
 </script>
 </body>
 </html>
@@ -1417,10 +1626,10 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path in ("/", "/index.html"):
             return self._send(HTML_UI, "text/html; charset=utf-8")
         if parsed.path.startswith("/health"):
-            return self._send('{"ok":true,"scheme":"roblox_cloud_v4"}')
+            return self._send('{"ok":true,"scheme":"roblox_cloud_v5"}')
         if parsed.path.startswith("/generate"):
             qs = parse_qs(parsed.query)
-            prompt = (qs.get("prompt") or ["orange tabby cat"])[0]
+            prompt = (qs.get("prompt") or ["build me a giant serpent"])[0]
             return self._send(json.dumps(generate({"prompt": prompt})))
         return self._send('{"error":"not found"}', status=404)
 
@@ -1436,5 +1645,5 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f"Roblox Cloud 3D Modeler AI v4 running on 0.0.0.0:{port}", flush=True)
+    print(f"Roblox Cloud 3D Modeler AI v5 running on 0.0.0.0:{port}", flush=True)
     srv.serve_forever()
