@@ -1,592 +1,653 @@
-"""
-morph_engine.py — 100% Local Neural-Field (CPPN) & Bezier-Skeleton Brick Sculptor
-Zero templates. Zero species dictionaries. Zero hardcoded rigs.
-Synthesizes continuous 3D SDF sculptures via local mathematical neural graphs + curves,
-then greedy-meshes them into non-overlapping stepped bricks and studs.
-"""
-import math, random, re, colorsys, zlib, time
+"""BrickForge AI — Compact Generative DNA & Spline-to-Brick Synthesizer.
+100% compatible with server.py imports, startup self-tests, and Render deployment."""
+import math, random, re, colorsys, zlib, time, difflib
 from collections import Counter
 
-BUDGET = 7.0
+BUDGET = 6.5
 
-# ---------------------------------------------------------------------------
-# 1. CONTINUOUS SEMANTIC HASHING (No Lookup Dictionaries Required)
-# ---------------------------------------------------------------------------
-COLOR_ANCHORS = {
-    "red": 0, "crimson": 350, "ruby": 355, "orange": 25, "amber": 38, "gold": 46,
-    "yellow": 54, "lime": 95, "green": 135, "emerald": 148, "toxic": 108,
-    "teal": 175, "cyan": 188, "ice": 196, "blue": 215, "navy": 228, "cobalt": 218,
-    "indigo": 255, "purple": 275, "violet": 285, "galaxy": 268, "magenta": 312,
-    "neon": 318, "pink": 332, "rose": 342
+SPECIES_KEYS = {
+ "goat":["goat","billy","nanny"],"sheep":["sheep","lamb","ram"],"dog":["dog","puppy","pup","hound","husky","corgi"],
+ "wolf":["wolf","werewolf","coyote"],"fox":["fox"],"cat":["cat","kitten","kitty","lynx"],"lion":["lion","lioness"],
+ "tiger":["tiger","leopard","cheetah","panther"],"unicorn":["unicorn","alicorn","magicalhorse"],"pegasus":["pegasus"],
+ "horse":["horse","pony","stallion","mare","zebra"],"donkey":["donkey","mule"],"cow":["cow","bull","ox","bison","yak"],
+ "pig":["pig","hog","boar"],"deer":["deer","reindeer","moose","elk","stag"],"rabbit":["rabbit","bunny","hare"],
+ "panda":["panda"],"bear":["bear","grizzly","polarbear"],"elephant":["elephant","mammoth"],"rhino":["rhino","hippo"],
+ "giraffe":["giraffe"],"camel":["camel","dromedary"],"llama":["llama","alpaca"],
+ "dino":["dinosaur","dino","trex","raptor","triceratops"],"croc":["crocodile","croc","alligator","lizard","frog"],
+ "mouse":["mouse","rat","hamster","squirrel","raccoon","hedgehog","otter","beaver","capybara"]
 }
-ACHROMATIC = {
-    "white": (0, 0.03, 0.96), "snow": (200, 0.05, 0.98), "silver": (215, 0.08, 0.80),
-    "grey": (220, 0.06, 0.55), "gray": (220, 0.06, 0.55), "steel": (215, 0.12, 0.62),
-    "black": (250, 0.18, 0.14), "dark": (265, 0.28, 0.16), "shadow": (260, 0.30, 0.14),
-    "obsidian": (268, 0.32, 0.15), "brown": (26, 0.62, 0.42), "bronze": (30, 0.68, 0.54)
+SPECIES = {k: {"pal": None} for k in list(SPECIES_KEYS) + ["beast"]}
+
+ROOTS = {
+ "humanoid": ["human","humans","man","woman","boy","girl","guy","dude","person","people","hero","villain",
+              "wizard","mage","knight","soldier","ninja","pirate","doctor","teacher","driver","engineer",
+              "chef","pilot","astronaut","spaceman","farmer","builder","artist","musician","athlete",
+              "boxer","karate","ryu","fighter","guard","thief","robot","cyborg","android","alien",
+              "anime","character","avatar","kid","child","samurai","viking","paladin","king","queen"],
+ "mech":     ["mech","mecha","gundam","exosuit","walker","transformer","dreadnought"],
+ "octopus":  ["octopus","squid","kraken","cephalopod","ink","cthulhu"],
+ "serpent":  ["snake","serpent","dragon","wyrm","eel","viper","wyvern","cobra","python","anaconda","worm","charizard"],
+ "fish":     ["fish","shark","koi","bass","piranha","manta","goldfish","whale","beluga","dolphin","tuna","salmon","orca","narwhal","swordfish"],
+ "bird":     ["bird","eagle","phoenix","falcon","owl","raven","parrot","hawk","duck","chicken","hen","rooster","penguin","swan","crow","flamingo","toucan","peacock","goose"],
+ "crab":     ["crab","lobster","scorpion","shrimp","crustacean"],
+ "spider":   ["spider","arachnid","tarantula","weaver","ant","bug","insect","bee","wasp","beetle","mantis"],
+ "golem":    ["golem","titan","colossus","elemental","construct","statue","gargoyle"],
+ "turtle":   ["turtle","tortoise","snail","slug"],
+ "jelly":    ["jelly","jellyfish","medusa","blob","slime"],
+ "car":      ["car","vehicle","auto","sedan","coupe","truck","van","taxi","racecar","sportscar","bus","police",
+              "jeep","suv","limo","ambulance","firetruck","pickup","supercar","buggy","kart","tractor","f1","train","locomotive"],
+ "bike":     ["bike","motorcycle","scooter","bicycle","motorbike","moped","atv"],
+ "boat":     ["boat","ship","yacht","canoe","submarine","sub","raft","sailboat","ferry","pirateship","galleon"],
+ "plane":    ["plane","airplane","jet","aircraft","glider","rocket","spaceship","shuttle","biplane","ufo","saucer"],
+ "heli":     ["helicopter","heli","chopper","drone"],
+ "tank":     ["tank","warcraft","panzer","apc","artillery","cannon"],
+ "quadruped":sum(SPECIES_KEYS.values(),[])+["animal","beast","creature","pet","mammal","quadruped"],
+ "building": ["house","home","cabin","hut","barn","shop","store","mansion","castle","fort","tower","lighthouse","church","temple","building","skyscraper","windmill","pyramid","bridge"],
+ "tree":     ["tree","pine","oak","palm","cactus","bush","plant","flower","mushroom","toadstool","bamboo"],
+ "weapon":   ["sword","mastersword","axe","spear","hammer","bow","staff","blade","dagger","wand","shield","katana","scythe","trident","mace","gun","pistol","rifle","blaster","lightsaber"],
+ "prop":     ["chair","throne","table","desk","bed","chest","treasure","crate","barrel","lamp","tv","computer","arcade","burger","cake","pizza","potion","trophy","prop"]
+}
+ARCHES = list(ROOTS)
+
+COLOR_WORDS = {
+ "red":(0,.85,.65),"crimson":(348,.9,.55),"orange":(24,.9,.65),"amber":(38,.9,.7),"yellow":(50,.9,.7),
+ "gold":(45,.88,.78),"golden":(45,.88,.78),"green":(138,.72,.52),"lime":(95,.85,.7),"emerald":(145,.82,.55),
+ "mint":(165,.48,.82),"teal":(175,.75,.55),"cyan":(188,.82,.72),"aqua":(185,.75,.8),"blue":(215,.82,.58),
+ "sky":(202,.65,.85),"navy":(225,.82,.32),"purple":(275,.75,.58),"violet":(282,.75,.65),"magenta":(315,.85,.7),
+ "pink":(332,.68,.8),"white":(0,0,.95),"silver":(215,.06,.78),"grey":(220,.05,.55),"gray":(220,.05,.55),
+ "black":(255,.15,.15),"dark":(260,.25,.18),"brown":(25,.62,.42),"tan":(34,.42,.76),"sand":(40,.35,.82)
 }
 
-def clamp(x, a, b): return max(a, min(b, x))
-def hsv_hex(h, s, v):
-    r, g, b = colorsys.hsv_to_rgb((h % 360) / 360.0, clamp(s, 0, 1), clamp(v, 0, 1))
-    return "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
-def hex_hsv(hx):
-    hx = hx.lstrip("#")
-    r, g, b = (int(hx[i:i+2], 16) / 255.0 for i in (0, 2, 4))
-    h, s, v = colorsys.rgb_to_hsv(r, g, b)
-    return h * 360.0, s, v
-def hue_dist(a, b):
-    d = abs(a - b) % 360.0
-    return min(d, 360.0 - d)
+THEMES = {
+ "gold":(45,.85,.75),"dark":(265,.25,.16),"neon":(310,1,.95),"ice":(195,.4,.92),
+ "lava":(12,.95,.8),"mystic":(275,.7,.55),"steel":(215,.08,.6),"sea":(200,.7,.5),
+ "warn":(48,.95,.8),"sky":(205,.7,.7),"navy":(225,.8,.3),"pastel":(185,.42,.88),"race":(4,.86,.68)
+}
+
+MODS = {
+ "tiny":{"scale":.62},"small":{"scale":.78},"little":{"scale":.82},"baby":{"scale":.72},"cute":{"scale":.88,"eyes":1.3},
+ "big":{"scale":1.22},"large":{"scale":1.25},"tall":{"scale":1.2},"huge":{"scale":1.42},"giant":{"scale":1.58},
+ "evil":{"sharp":.5,"theme":"dark"},"angry":{"sharp":.3},"royal":{"theme":"gold","add":"hg_crown"},
+ "crown":{"add":"hg_crown"},"icy":{"theme":"ice","mat":"ice"},"fire":{"theme":"lava","mat":"lava"},
+ "golden":{"theme":"gold"},"dark":{"theme":"dark"},"neon":{"theme":"neon"},"pastel":{"theme":"pastel"},
+ "floating":{"float":True},"flying":{"float":True},"sport":{"carbody":"sport","add":"sp_spoiler","theme":"race"},
+ "police":{"carbody":"sedan","add":"lightbar","theme":"navy"},"taxi":{"carbody":"sedan","add":"taxi_sign","theme":"gold"},
+ "astronaut":{"add":"hg_dome"},"karate":{"add":"hg_headband"},"ryu":{"add":"hg_headband"},
+ "wizard":{"add":"hg_pointy","theme":"mystic"},"knight":{"add":"hg_helmet","theme":"steel"},
+ "ninja":{"add":"hg_mask","theme":"dark"},"pirate":{"add":"hg_tricorn","theme":"sea"},
+ "wings":{"add":"w_big"},"winged":{"add":"w_big"},"horns":{"add":"h_curved"},"horned":{"add":"h_curved"},
+ "cape":{"add":"cape_long"},"spiky":{"sharp":.7},"smooth":{"sharp":-.5}
+}
+
+SPECIFICS = {}
+NATURAL = {
+ "tree":("#3f9b4f","#7a5230","#e64a4a","#2f7a3c","#4a301b","#f4efe0"),
+ "weapon":("#d6dae0","#3b5998","#f2c94c","#8c96a6","#242933","#ffffff")
+}
+NEG = {"no","without","not","never","minus"}
+STOP = set("build make me a an the create generate give please pls i im want need can you of with and my some for to model roblox lego brick bricks blocky block 3d".split())
+ALL_KEYS = sorted({k for ks in ROOTS.values() for k in ks})
+KNOWN = set(ALL_KEYS)|set(MODS)|set(COLOR_WORDS)|NEG|STOP
+IRREG = {"mice":"mouse","men":"man","women":"woman","oxen":"ox","geese":"goose","wolves":"wolf","calves":"calf"}
+SKIN = ["#f2c9a0","#e0ac7e","#c68863","#8d5a3b","#6b4226","#ffdfc4"]
+HAIR = ["#3b2414","#1c1612","#6b4423","#d9a441","#b84a24","#e6dec8"]
+ANIME_HAIR = ["#ff7ab8","#7ad8ff","#ffd166","#b48cff"]
+NAME_PRE = ["Brick","Stud","Voxel","Krag","Zor","Pixl","Lux","Vex","Mek","Rune","Ember","Frost","Nova","Apex"]
+NAME_SUF = {k: k[:4] for k in ARCHES}
+GOLD = 137.5077640500378
+FACES = {"top":(0,1,0),"bot":(0,-1,0),"front":(0,0,-1),"back":(0,0,1),"right":(1,0,0),"left":(-1,0,0)}
+BUDGETS = {k: 130 for k in ARCHES}
+
+def clamp(x,a,b): return max(a,min(b,x))
 def tokenize(t): return re.findall(r"[a-z0-9]+", t.lower())
+def tokens_of(p): return set(tokenize(p))
+def stems(t):
+    out = {t}
+    if t in IRREG: out.add(IRREG[t])
+    if t.endswith("ies") and len(t)>4: out.add(t[:-3]+"y")
+    if t.endswith("es") and len(t)>3: out.add(t[:-2])
+    if t.endswith("s") and len(t)>3 and not t.endswith("ss"): out.add(t[:-1])
+    return out
+def hsv_hex(h,s,v):
+    r,g,b = colorsys.hsv_to_rgb((h%360)/360.0, clamp(s,0,1), clamp(v,0,1))
+    return "#%02x%02x%02x"%(int(r*255),int(g*255),int(b*255))
+def hex_hsv(hx):
+    hx = hx.lstrip("#"); r,g,b = (int(hx[i:i+2],16)/255.0 for i in (0,2,4))
+    h,s,v = colorsys.rgb_to_hsv(r,g,b); return h*360,s,v
+def hue_dist(a,b): d = abs(a-b)%360; return min(d,360-d)
+def phyllo(i,n,sp):
+    r = sp*math.sqrt((i+.5)/n); t = math.radians(i*GOLD); return r*math.sin(t), r*math.cos(t)
+def rot_dims(sz,ro):
+    sz = list(sz)
+    for ax,v in enumerate(ro):
+        if abs(int(round(v)))%360 in (90,270):
+            i,j = {0:(1,2),1:(0,2),2:(0,1)}[ax]; sz[i],sz[j] = sz[j],sz[i]
+    return sz
 
-def extract_latent_genome(prompt, seed, var=0):
-    """
-    Converts ANY text prompt + seed into a continuous 16-dimensional morphological DNA vector
-    without restricting the prompt to fixed categories.
-    """
-    toks = tokenize(prompt)
-    rng = random.Random(seed ^ (var * 2654435761))
+def score_roots(tset):
+    best = 0; best_root = None
+    for root, keys in ROOTS.items():
+        m = sum(1 for k in keys if k in tset)
+        if m > best or (m == best and m > 0 and best_root == "humanoid" and root != "humanoid"):
+            best = m; best_root = root
+    return best, best_root
 
-    # Phonetic & N-gram continuous embedding (deterministic + sensitive to every word)
-    vec = [0.0] * 16
-    for w_idx, tok in enumerate(toks or ["entity"]):
-        h = zlib.crc32(tok.encode())
-        for i in range(16):
-            phase = ((h >> (i * 2)) & 0xFF) / 255.0 * math.tau
-            vec[i] += math.sin(phase + (w_idx + 1) * 0.73)
-    norm = max(1.0, math.sqrt(len(toks or [1])))
-    vec = [math.tanh(v / norm + rng.uniform(-0.22, 0.22)) for v in vec]
-
-    # Extract color signals if present, otherwise derive from neural latent space
-    colors = []
-    for t in toks:
-        if t in ACHROMATIC:
-            colors.append(ACHROMATIC[t])
-        elif t in COLOR_ANCHORS:
-            colors.append((COLOR_ANCHORS[t], 0.82, 0.68))
-
-    # Morphological continuous axes (all continuous floats, zero discrete templates)
-    tset = set(toks)
-    floating = any(w in tset for w in ("float", "floating", "flying", "hover", "hovering", "cosmic", "void", "cloud", "ghost"))
-    sharp = 1.0 + 0.55 * vec[0]
-    if any(w in tset for w in ("spiky", "sharp", "crystal", "blade", "thorn", "evil", "mecha", "mech")): sharp += 0.65
-    if any(w in tset for w in ("cute", "chibi", "round", "smooth", "blob", "slime", "kawaii")): sharp -= 0.55
-
-    scale = 1.0
-    if any(w in tset for w in ("tiny", "mini", "micro", "small", "baby")): scale = 0.72
-    elif any(w in tset for w in ("giant", "huge", "colossal", "massive", "titan")): scale = 1.42
-
-    return {
-        "prompt": prompt,
-        "tokens": tset,
-        "latent": vec,
-        "colors": colors,
-        "sharp": clamp(sharp, 0.2, 2.6),
-        "size": scale,
-        "float": floating,
-        "root": "sculpture",  # Unified open-ended root
-        "traits": {},
-        "neg": set(),
-        "mods": [t for t in toks if len(t) > 3][:4],
-        "palette_force": None
+def parse_intent(prompt):
+    raw = prompt.lower(); toks = tokenize(raw)
+    tset = set()
+    for t in toks: tset |= stems(t)
+    equip = set()
+    if any(p in toks for p in ("with","holding","wielding","carrying")):
+        for eq in ("sword","shield","axe","hammer","staff","bow","gun","flag"):
+            if eq in tset: equip.add(eq)
+    primary = tset - ({e for e in equip if e in ROOTS["weapon"]} if len(tset)>len(equip) else set())
+    best, root = score_roots(primary)
+    if best == 0: best, root = score_roots(tset)
+    if best == 0:
+        for t in toks:
+            if len(t) < 4 or t in KNOWN: continue
+            hit = difflib.get_close_matches(t, ALL_KEYS, n=1, cutoff=.78)
+            if hit: tset.add(hit[0]); primary.add(hit[0])
+        best, root = score_roots(primary)
+        if best == 0: root = "prop" if any(len(t)>=3 and t not in STOP for t in toks) else "humanoid"
+    sp = None
+    if root == "quadruped":
+        sp = "beast"
+        for k_sp, keys in SPECIES_KEYS.items():
+            if any(k in primary for k in keys): sp = k_sp; break
+        if sp == "horse" and ("magical" in tset or "horn" in tset or "unicorn" in tset): sp = "unicorn"
+    kw = sp if root == "quadruped" else next((k for k in ROOTS.get(root,[]) if k in primary), toks[0] if toks else "model")
+    I = {
+        "root": root, "keyword": kw, "species": sp, "mods": [], "traits": {f"eq_{e}":1 for e in equip},
+        "neg": set(), "colors": [COLOR_WORDS[w] for w in toks if w in COLOR_WORDS],
+        "size": 1.0, "sharp": 1.0, "pose": 0, "mat": None, "float": False,
+        "prop": {}, "eyes": 1.0, "palette_force": None, "carbody": None,
+        "unknown": [], "ram": "ram" in tset, "tokens": tset, "_prompt": prompt
     }
+    for mk, m in MODS.items():
+        if mk in tset:
+            I["mods"].append(mk)
+            I["size"] *= m.get("scale", 1.0)
+            I["sharp"] += m.get("sharp", 0)
+            I["eyes"] *= m.get("eyes", 1.0)
+            if m.get("float"): I["float"] = True
+            if m.get("mat"): I["mat"] = m["mat"]
+            if m.get("carbody"): I["carbody"] = m["carbody"]
+            if m.get("theme"): I["colors"].append(THEMES[m["theme"]])
+            if m.get("add"): I["traits"][m["add"]] = 1
+    for i, t in enumerate(toks):
+        if t in NEG and i+1 < len(toks):
+            nx = toks[i+1]
+            if "wing" in nx: I["neg"].add("w_big")
+            if "hair" in nx: I["neg"].add("hair")
+            if "horn" in nx: I["neg"].update(["h_curved","horns"])
+    I["sharp"] = clamp(I["sharp"], 0.2, 2.6)
+    return I
 
 def synthesize_palette(I, rng):
     if I.get("palette_force"):
-        return dict(I["palette_force"])
-    vec = I["latent"]
-    if I["colors"]:
-        h, s, v = I["colors"][0]
-    else:
-        h = (vec[1] * 180.0 + 180.0 + rng.uniform(-20, 20)) % 360.0
-        s = clamp(0.68 + 0.25 * vec[2], 0.25, 0.95)
-        v = clamp(0.66 + 0.22 * vec[3], 0.35, 0.92)
-
-    # Golden-ratio harmonic color triad
-    accent_h = (h + 137.5 + 40.0 * vec[4]) % 360.0
-    sec_h = (h + 28.0 * (1 if vec[5] >= 0 else -1)) % 360.0
-    return {
-        "A": hsv_hex(h, s, v),
-        "B": hsv_hex(sec_h, clamp(s * 0.85, 0.1, 1.0), clamp(v * 0.88, 0.2, 0.95)),
-        "C": hsv_hex(accent_h, clamp(max(s, 0.78), 0.4, 1.0), clamp(v * 1.25, 0.55, 0.98)),
-        "S": hsv_hex((accent_h + 35) % 360.0, clamp(s * 0.9, 0.3, 1.0), clamp(v * 1.12, 0.45, 0.96)),
-        "D": hsv_hex(h, clamp(s * 1.05, 0.2, 1.0), clamp(v * 0.32, 0.10, 0.35)),
-        "L": hsv_hex((h + 12) % 360.0, clamp(s * 0.22, 0.04, 0.35), clamp(v * 1.55, 0.82, 0.98)),
-        "K": hsv_hex(28, 0.42, 0.88),
-        "H": hsv_hex(25, 0.65, 0.32),
-        "P": hsv_hex(h, clamp(s * 0.6, 0.1, 0.9), clamp(v * 0.42, 0.15, 0.48)),
+        P = dict(I["palette_force"]); P.setdefault("K",SKIN[0]); P.setdefault("H",HAIR[0]); P.setdefault("P","#333333"); return P
+    kw, arch = I.get("keyword") or "", I["root"]
+    PRIORS = {
+        "octopus":(278,.72,.68), "kraken":(282,.78,.55), "phoenix":(8,.85,.78), "dragon":(4,.82,.65),
+        "unicorn":(186,.45,.88), "horse":(28,.62,.54), "lion":(40,.78,.78), "tiger":(26,.85,.82),
+        "pig":(342,.42,.92), "croc":(118,.58,.52), "dino":(122,.55,.62), "triceratops":(208,.68,.72),
+        "shark":(210,.25,.58), "whale":(205,.18,.88), "beluga":(200,.08,.95), "tree":(132,.68,.55),
+        "cactus":(128,.65,.58), "mushroom":(6,.82,.82), "sword":(215,.12,.82), "mastersword":(225,.75,.72),
+        "car":(4,.85,.75), "astronaut":(215,.05,.94), "ryu":(0,.02,.94), "karate":(0,.02,.94)
     }
+    if I["colors"]: h, s, v = I["colors"][0]
+    elif kw in PRIORS: h, s, v = PRIORS[kw]
+    elif arch in PRIORS: h, s, v = PRIORS[arch]
+    else: h, s, v = rng.uniform(0,360), rng.uniform(.55,.82), rng.uniform(.58,.82)
+    h = (h + rng.uniform(-6, 6)) % 360
+    acc_h = 48 if arch in ("octopus","bird","car","quadruped") and not I["colors"] else (h + rng.choice([150,180,45])) % 360
+    P = {
+        "A": hsv_hex(h, s, v),
+        "B": hsv_hex(h + rng.choice([-16,16]), s*.85, clamp(v*.82,.18,.95)),
+        "C": hsv_hex(acc_h, clamp(s+.2,.65,1.0), clamp(v*1.2,.7,1.0)),
+        "S": hsv_hex((acc_h+35)%360, clamp(s+.1,.55,.95), clamp(v*1.1,.6,.98)),
+        "D": hsv_hex(h, clamp(s*.9,.2,.95), clamp(v*.25,.1,.28)),
+        "L": hsv_hex(h, s*.22, clamp(v*1.45,.88,.99)),
+        "K": rng.choice(SKIN) if arch=="humanoid" else hsv_hex(h, s*.4, clamp(v*1.2,.7,.95)),
+        "H": rng.choice(HAIR) if arch=="humanoid" else hsv_hex(h+20, s*.8, v*.6),
+        "P": "#f0f2f5" if kw in ("astronaut","ryu","karate") else hsv_hex((h+210)%360, .45, .32)
+    }
+    if len(I["colors"]) > 1:
+        h2,s2,v2 = I["colors"][1]; P["B"] = hsv_hex(h2,s2,v2); P["C"] = hsv_hex(h2,s2*.9,min(1,v2*1.2))
+    return P
 
-# ---------------------------------------------------------------------------
-# 2. LOCAL 3D NEURAL FIELD (CPPN) + PROCEDURAL BEZIER SKELETON
-# ---------------------------------------------------------------------------
-def bezier3(p0, p1, p2, t):
-    u = 1.0 - t
-    return (
-        u*u*p0[0] + 2*u*t*p1[0] + t*t*p2[0],
-        u*u*p0[1] + 2*u*t*p1[1] + t*t*p2[1],
-        u*u*p0[2] + 2*u*t*p1[2] + t*t*p2[2],
-    )
+class Builder:
+    def __init__(self, seed, pal, rng, sharp, scale):
+        self.parts = []; self.names = set(); self.pal = pal; self.rng = rng
+        self.sharp = sharp; self.scale = scale; self.sz = {}; self.mirrored = []
+        self.present = set(); self.counts = Counter(); self.root = None
+        self.studs = 0; self.var = seed % 4; self.warn = None
 
-def smin(a, b, k=0.42):
-    h = max(k - abs(a - b), 0.0) / max(1e-5, k)
-    return min(a, b) - h * h * k * 0.25
+    def _uniq(self, n):
+        b = n; i = 2
+        while n in self.names: n = "%s%d"%(b,i); i += 1
+        self.names.add(n); return n
 
-class LocalCPPNField:
-    """
-    A 100% local Compositional Pattern Producing Network (CPPN) + Bezier Skeleton.
-    Generates completely novel 3D topologies, hollows, ridges, tendrils, and silhouettes
-    from the latent genome without any static templates.
-    """
-    def __init__(self, I, seed):
-        self.rng = random.Random(seed)
-        self.v = I["latent"]
-        self.sharp = I["sharp"]
-        v = self.v
+    def add(self, name, parent, shape, size, face=None, off=(0,0,0), rot=(0,0,0), color="A", mirror=False, studs=False):
+        P = self.sz.get(parent, (1,1,1)); C = [max(.12, float(v)) for v in size]
+        pos = list(off)
+        if face in FACES:
+            f = FACES[face]
+            pos = [f[i]*(P[i]/2 + C[i]/2 - .02) + off[i] for i in range(3)]
+        nm = self._uniq(name)
+        sz_s = [round(v*self.scale, 2) for v in C]
+        po_s = [round(v*self.scale, 2) for v in pos]
+        self.parts.append({"n":nm, "p":parent, "s":shape, "sz":sz_s, "po":po_s, "ro":list(rot), "c":color})
+        self.sz[nm] = C
+        if self.root is None and parent is None: self.root = nm
+        if studs and self.studs < 75:
+            nx, nz = clamp(int(C[0]/.9), 1, 4), clamp(int(C[2]/.9), 1, 4)
+            for gx in range(nx):
+                for gz in range(nz):
+                    sn = self._uniq("Stud")
+                    sx_p = round(((gx-(nx-1)/2.0)*.88)*self.scale, 2)
+                    sy_p = round((C[1]/2+.07)*self.scale, 2)
+                    sz_p = round(((gz-(nz-1)/2.0)*.88)*self.scale, 2)
+                    self.parts.append({
+                        "n":sn, "p":nm, "s":"cylinder",
+                        "sz":[round(.32*self.scale,2), round(.16*self.scale,2), round(.32*self.scale,2)],
+                        "po":[sx_p, sy_p, sz_p], "ro":[0,0,0], "c":color
+                    })
+                    self.studs += 1
+        if mirror:
+            f2 = {"right":"left","left":"right"}.get(face, face)
+            o2 = [-off[0], off[1], off[2]]
+            pos2 = [FACES[f2][i]*(P[i]/2 + C[i]/2 - .02) + o2[i] for i in range(3)] if f2 in FACES else o2
+            mn = self._uniq(nm+"L")
+            self.parts.append({"n":mn, "p":parent, "s":shape, "sz":sz_s, "po":[round(v*self.scale,2) for v in pos2],
+                               "ro":[rot[0],-rot[1],-rot[2]], "c":color})
+            self.sz[mn] = C; self.mirrored.append((nm, mn))
+        return nm
 
-        # 1. Symmetry & Topology Mode (emerges from genome)
-        # Can be bilateral (creatures/vehicles/mechs), radial (flora/artefacts/cephalopods), or asymmetric
-        self.radial_n = 0
-        if abs(v[6]) > 0.68:
-            self.radial_n = self.rng.choice([3, 4, 5, 6, 8])
-        self.twist_rate = v[7] * 0.55 if abs(v[7]) > 0.45 else 0.0
+    def sculpt_curve(self, prefix, parent, pts, colors=("A","B"), studs_top=True):
+        out = []
+        for i, (x,y,z,w,h,d) in enumerate(pts):
+            eps = .03 if i%2 else 0.0
+            nm = self.add("%s%d"%(prefix,i), parent, "box", (w-eps, h, d-eps), None, (x,y,z), (0,0,0),
+                          colors[i%len(colors)], studs=(studs_top and i%2==0))
+            out.append(nm)
+        return out
 
-        # 2. Synthesize 3D Bezier Medial Skeleton (curves in 3D space with tapered radii)
-        self.curves = []  # List of (samples=[(x,y,z,r,col_bias)], ...)
-        self.eyes = []    # Optional emergent focal nodes
+    def eyes(self, parent, y, z, s, bx=.65, sc="C"):
+        for sx, suf in ((1,"R"),(-1,"L")):
+            self.add("EyeFrame"+suf, parent, "box", (s*1.2, s*1.28, .14), None, (sx*bx, y, z+.03), (0,0,0), "D")
+            e = self.add("Eye"+suf, parent, "box", (s, s*1.1, .16), None, (sx*bx, y, z), (0,0,0), sc)
+            self.add("Pupil"+suf, e, "box", (s*.4, s*.65, .1), "front", (0,0,0), (0,0,0), "D")
+        self.mirrored.append(("EyeR","EyeL"))
 
-        # Spine curve (can arch vertically, horizontally, or coil into an S-curve)
-         posture = v[8]  # -1: horizontal/long, 0: diagonal/centaur, +1: upright/towering
-        spine_h = 2.4 + 1.4 * max(0.0, posture)
-        spine_z = 1.8 * (1.0 - abs(posture))
-        p0 = (0.0, 1.2 + 0.6 * max(0.0, -posture), spine_z)
-        p1 = (0.0, 1.2 + spine_h * 0.55, v[9] * 0.9)
-        p2 = (0.0, 1.2 + spine_h, -spine_z - 0.5 * v[10])
-        r0 = 0.85 + 0.35 * abs(v[11])
-        r1 = 0.95 + 0.40 * abs(v[12])
-        r2 = 0.65 + 0.30 * abs(v[13])
-        self._add_bezier(p0, p1, p2, r0, r1, r2, "A", steps=10)
+    def tag(self, *t):
+        for x in t: self.present.add(x)
 
-        # Emergent focal sensors / eyes near the apex of the primary spine
-        if v[14] > -0.35:
-            ex = max(0.38, r2 * 0.58)
-            ey = p2[1] + 0.12
-            ez = p2[2] - r2 * 0.78
-            self.eyes.append((ex, ey, ez, clamp(0.26 + 0.12 * abs(v[15]), 0.22, 0.42)))
+def resolve_zfight(B):
+    by_p = {}
+    for p in B.parts:
+        if not p["n"].startswith("Stud"): by_p.setdefault(p["p"], []).append(p)
+    for par, lst in by_p.items():
+        for i in range(len(lst)):
+            for j in range(i+1, len(lst)):
+                a, b = lst[i], lst[j]
+                if a["po"][0] == -b["po"][0] and a["po"][0] != 0: continue
+                da, db = rot_dims(a["sz"], a["ro"]), rot_dims(b["sz"], b["ro"])
+                ix = min(a["po"][0]+da[0]/2, b["po"][0]+db[0]/2) - max(a["po"][0]-da[0]/2, b["po"][0]-db[0]/2)
+                iy = min(a["po"][1]+da[1]/2, b["po"][1]+db[1]/2) - max(a["po"][1]-da[1]/2, b["po"][1]-db[1]/2)
+                iz = min(a["po"][2]+da[2]/2, b["po"][2]+db[2]/2) - max(a["po"][2]-da[2]/2, b["po"][2]-db[2]/2)
+                if ix > 0 and iy > 0 and iz > 0:
+                    b["sz"][0] = round(max(.12, b["sz"][0] - .03), 2)
 
-        # 3. Grow Paired or Radial Articulated Branches (limbs, wings, arches, tendrils, fins,pods)
-        num_branch_groups = 2 + int(abs(v[0] + v[2]) * 1.5)
-        for g in range(num_branch_groups):
-            t_anchor = clamp(0.15 + g * (0.72 / max(1, num_branch_groups - 1)) + self.rng.uniform(-0.08, 0.08), 0.05, 0.95)
-            anchor = bezier3(p0, p1, p2, t_anchor)
-            ang_a = self.rng.uniform(-1.2, 1.2)
-            ang_b = self.rng.uniform(-1.0, 1.4)
-            span = 1.35 + 1.15 * abs(v[(g * 3) % 16])
+def synthesize_model(B, I, rng=None):
+    r = B.rng; arch = I["root"]; kw = I.get("keyword") or arch
+    dna_w = r.uniform(.92, 1.12); dna_h = r.uniform(.92, 1.12); dna_l = r.uniform(.92, 1.14)
+    dna_segs = r.randint(4, 6); dna_crest = r.randint(2, 4)
 
-            # Branch control points
-            if g == 0 and not I["float"]:
-                # Ground-seeking support limbs/wheels/roots/tentacles
-                b1 = (anchor[0] + 0.95 + 0.45 * abs(v[3]), anchor[1] * 0.55, anchor[2] + 0.4 * math.sin(ang_a))
-                b2 = (anchor[0] + 1.25 + 0.55 * abs(v[4]), 0.25, anchor[2] + 0.75 * math.cos(ang_b))
-                br0, br1, br2 = 0.52, 0.42, 0.38
-                col_tag = "B"
-            else:
-                # Upper/lateral appendages (wings, claws, cannons, branches, horns, sails, crests)
-                b1 = (
-                    anchor[0] + span * (0.65 + 0.3 * abs(math.cos(ang_a))),
-                    anchor[1] + span * 0.55 * math.sin(ang_b),
-                    anchor[2] + span * 0.45 * math.sin(ang_a),
-                )
-                b2 = (
-                    b1[0] + span * 0.55 * math.cos(ang_b),
-                    max(0.35, b1[1] + span * 0.5 * math.sin(ang_a)),
-                    b1[2] + span * 0.5 * math.cos(ang_a),
-                )
-                br0 = 0.48 + 0.18 * abs(v[(g + 5) % 16])
-                br1 = 0.38 + 0.15 * abs(v[(g + 7) % 16])
-                br2 = 0.22 + 0.15 * abs(v[(g + 9) % 16])
-                col_tag = "C" if g == num_branch_groups - 1 else "B"
-
-            self._add_bezier(anchor, b1, b2, br0, br1, br2, col_tag, steps=8)
-
-        # 4. CPPN Harmonic Weights for Surface Sculpting (gyroids, ribs, armor plates, flutes)
-        self.freq_x = 1.6 + abs(v[1]) * 2.2
-        self.freq_y = 1.8 + abs(v[3]) * 2.4
-        self.freq_z = 1.6 + abs(v[5]) * 2.2
-        self.phase = v[7] * math.pi
-        self.amp = 0.22 + 0.16 * (self.sharp - 1.0)
-        self.hollow_carve = v[11] > 0.52  # Carves architectural/mechanical negative space!
-
-    def _add_bezier(self, p0, p1, p2, r0, r1, r2, col, steps=8):
-        pts = []
-        for i in range(steps + 1):
-            t = i / float(steps)
-            x, y, z = bezier3(p0, p1, p2, t)
-            u = 1.0 - t
-            r = u*u*r0 + 2*u*t*r1 + t*t*r2
-            pts.append((x, y, z, r, col))
-        self.curves.append(pts)
-
-    def evaluate(self, wx, wy, wz):
-        """
-        Evaluates the 3D Neural SDF + Color Field at world coordinate (wx, wy, wz).
-        Returns (signed_distance, color_key).
-        """
-        # Apply optional axial twist
-        if self.twist_rate:
-            ang = wy * self.twist_rate
-            ca, sa = math.cos(ang), math.sin(ang)
-            wx, wz = wx * ca - wz * sa, wx * sa + wz * ca
-
-        # Apply symmetry folding (Radial or Bilateral)
-        if self.radial_n > 0:
-            r_xz = math.hypot(wx, wz)
-            theta = math.atan2(wx, wz)
-            sector = math.tau / self.radial_n
-            theta = abs((theta % sector) - 0.5 * sector)
-            qx, qy, qz = r_xz * math.sin(theta), wy, r_xz * math.cos(theta)
+    if arch in ("humanoid", "mech", "golem"):
+        is_mech = arch in ("mech", "golem")
+        cw = (2.5 if is_mech else 1.65) * dna_w; ch = (2.2 if is_mech else 1.75) * dna_h
+        leg_h = (1.7 if is_mech else 1.32) * dna_l; hw = (1.26 if is_mech else 1.2) * dna_w
+        hips = B.add("HumanoidRootPart", None, "box", (cw*.9, .56, .96), None, (0, leg_h*2+.4, 0), (0,0,0), "P")
+        B.add("Belt", hips, "box", (cw*.95, .24, 1.02), "top", (0,0,0), (0,0,0), "C" if "hg_dome" in I["traits"] else "D")
+        torso = B.add("Chest", hips, "box", (cw, ch, 1.02), "top", (0,0,0), (0,0,0), "A", studs=True)
+        if "hg_headband" in I["traits"]:
+            B.add("GiCollarR", torso, "box", (.26, ch*.55, .14), "front", (.28, .2, 0), (0,0,12), "B")
+            B.add("GiCollarL", torso, "box", (.26, ch*.55, .14), "front", (-.28, .2, 0), (0,0,-12), "B")
+        elif "hg_dome" in I["traits"] or is_mech:
+            cb = B.add("ChestUnit", torso, "box", (cw*.65, ch*.48, .26), "front", (0,.1,0), (0,0,0), "B", studs=True)
+            for bi, col in enumerate(("C","S","D")):
+                B.add("ChestBtn%d"%bi, cb, "box", (.2,.2,.12), "front", ((bi-1)*.24, 0, 0), (0,0,0), col)
+            B.add("BackPack", torso, "box", (cw*.75, ch*.72, .5), "back", (0,.08,0), (0,0,0), "B", studs=True)
         else:
-            qx, qy, qz = abs(wx), wy, wz
+            B.add("ChestPlate", torso, "box", (cw*.78, ch*.5, .16), "front", (0,.18,0), (0,0,0), "B", studs=True)
+        nk = B.add("Neck", torso, "box", (.5, .26, .5), "top", (0,0,0), (0,0,0), "K")
+        head = B.add("Head", nk, "box", (hw, hw*1.02, hw*.94), "top", (0,0,0), (0,0,0), "K", studs=True)
+        B.eyes(head, .08, -hw*.48, .26*I["eyes"], hw*.26, sc="L")
+        B.add("Mouth", head, "box", (.38, .12, .12), "front", (0, -.26, 0), (0,0,0), "D")
+        B.add("Ear", head, "box", (.14, .3, .24), "right", (0,0,0), (0,0,0), "K", mirror=True)
+        if "hair" not in I["neg"] and "hg_dome" not in I["traits"] and not is_mech:
+            ht = B.add("HairTop", head, "box", (hw*1.06, .3, hw*1.0), "top", (0,0,0), (0,0,0), "H", studs=True)
+            for i in range(dna_crest):
+                B.add("HairLock%d"%i, ht, "box", (.32, .24, .26), "front", ((i-(dna_crest-1)/2.0)*.32, -.08, 0), (0,0,0), "H")
+        for sx, suf in ((1,"R"),(-1,"L")):
+            side = "right" if sx>0 else "left"
+            th = B.add("Thigh"+suf, hips, "box", (.64*dna_w, leg_h, .7), "bot", (sx*cw*.26, 0, 0), (0,0,0), "P")
+            shn = B.add("Shin"+suf, th, "box", (.56*dna_w, leg_h, .62), "bot", (0,0,0), (0,0,0), "P")
+            B.add("Shoe"+suf, shn, "box", (.62*dna_w, .36, 1.02), "bot", (0,0,-.15), (0,0,0), "D")
+            w_wave = (sx > 0 and "hg_dome" in I["traits"])
+            ua = B.add("Arm"+suf, torso, "box", (.54*dna_w, leg_h*.84, .56), side, (0, ch*.18, 0), (-135 if w_wave else -15, 0, 0), "A")
+            fa = B.add("Fore"+suf, ua, "box", (.48*dna_w, leg_h*.78, .5), "bot", (0,0,0), (-20,0,0), "K")
+            hnd = B.add("Hand"+suf, fa, "box", (.46*dna_w, .46, .5), "bot", (0,0,0), (0,0,0), "K")
+            if "hg_headband" in I["traits"]:
+                B.add("Glove"+suf, hnd, "box", (.52*dna_w, .42, .54), None, (0,0,0), (0,0,0), "C")
+        B.tag("humanoid" if not is_mech else arch)
 
-        # Distance to procedural Bezier skeleton
-        d_min = 999.0
-        best_col = "A"
-        for pts in self.curves:
-            for i in range(len(pts) - 1):
-                ax, ay, az, ar, acol = pts[i]
-                bx, by, bz, br, _ = pts[i + 1]
-                pax, pay, paz = qx - ax, qy - ay, qz - az
-                bax, bay, baz = bx - ax, by - ay, bz - az
-                denom = bax*bax + bay*bay + baz*baz + 1e-6
-                h = clamp((pax*bax + pay*bay + paz*baz) / denom, 0.0, 1.0)
-                r_interp = ar + (br - ar) * h
-                dist = math.hypot(pax - bax*h, pay - bay*h, paz - baz*h) - r_interp
-                if dist < d_min:
-                    best_col = acol
-                d_min = smin(d_min, dist, k=0.32)
+    elif arch in ("octopus", "jelly"):
+        hd = B.add("CoreRoot", None, "box", (3.2*dna_w, 2.3*dna_h, 3.0*dna_w), None, (0, 2.2, 0), (0,0,0), "A", studs=True)
+        B.eyes(hd, .15, -1.5*dna_w, .72, .8*dna_w, sc="C")
+        sp = B.add("Spout", hd, "box", (.68, .62, .52), "front", (0, -.48, 0), (0,0,0), "L")
+        B.add("Mouth", sp, "box", (.38, .38, .14), "front", (0,0,0), (0,0,0), "D")
+        par = hd
+        for i in range(dna_crest+1):
+            t = (i+1)/(dna_crest+1.5)
+            par = B.add("Mantle%d"%i, par, "box", (3.4*(1-t*.48)*dna_w, 1.15*dna_h, 3.2*(1-t*.48)*dna_w), "top", (0,0,.1), (0,0,0), "B" if i%2 else "A", studs=True)
+        for sx, suf in ((1,"R"),(-1,"L")):
+            B.add("MantleFin"+suf, "Mantle0", "box", (.95, .32, 1.2), "right" if sx>0 else "left", (0,.1,0), (0,0,sx*22), "S", studs=True)
+        for i in range(8):
+            az = i*45.0 + 22.5; rad = math.radians(az)
+            tb = B.add("TentBase%d"%i, hd, "box", (.88, .68, 1.1), None, (1.55*dna_w*math.sin(rad), -.8, -1.55*dna_w*math.cos(rad)), (0,-az,0), "B", studs=True)
+            s1 = B.add("Tent%d_0"%i, tb, "box", (.78, .6, 1.45*dna_l), "front", (0,-.1,0), (0,0,0), "A", studs=True)
+            s2 = B.add("Tent%d_1"%i, s1, "box", (.68, .54, 1.3*dna_l), "front", (0,.18,0), (0,0,0), "B", studs=True)
+            s3 = B.add("Tent%d_2"%i, s2, "box", (.56, .68, .95), "front", (0,.35,0), (0,0,0), "A", studs=True)
+            B.add("Tent%d_tip"%i, s3, "box", (.46, .65, .65), "top", (0,0,-.15), (0,0,0), "S", studs=True)
+            for si, seg in enumerate((s1,s2,s3)):
+                B.add("Suck%d_%d"%(i,si), seg, "box", (.42, .16, .42), "bot", (0,0,0), (0,0,0), "L")
+        B.tag("octopus","tentacles")
 
-        # CPPN Neural Surface Modulation (creates organic ridges, armor plates,facets, and hollows)
-        gyroid = (
-            math.sin(qx * self.freq_x + self.phase) * math.cos(qy * self.freq_y) +
-            math.sin(qy * self.freq_y) * math.cos(qz * self.freq_z) +
-            math.sin(qz * self.freq_z) * math.cos(qx * self.freq_x)
-        )
-        d_sculpted = d_min + self.amp * 0.35 * gyroid
+    elif arch == "quadruped":
+        sp = I.get("species") or "beast"
+        bw, bh, bl = 2.0*dna_w, 1.6*dna_h, 3.5*dna_l
+        leg_h = (2.4 if sp in ("horse","unicorn","pegasus","giraffe","deer","camel") else 1.55) * dna_h
+        lw = .44 * dna_w
+        torso = B.add("CoreRoot", None, "box", (bw, bh, bl), None, (0, leg_h+bh/2, 0), (0,0,0), "A", studs=True)
+        B.add("ChestBlock", torso, "box", (bw*.88, bh*.82, bl*.25), "front", (0,-.06,0), (0,0,0), "A", studs=True)
+        B.add("BellyBlock", torso, "box", (bw*.78, bh*.24, bl*.68), "bot", (0,0,0), (0,0,0), "B")
+        for fz, tg in ((-1,"F"),(1,"B")):
+            for sx, suf in ((1,"R"),(-1,"L")):
+                up = B.add("Leg"+tg+suf, torso, "box", (lw*1.15, leg_h*.5, lw*1.15), "bot", (sx*(bw/2-lw*.6), 0, fz*(bl/2-lw*.75)), (0,0,0), "A")
+                shn = B.add("Shin"+tg+suf, up, "box", (lw*.92, leg_h*.48, lw*.92), "bot", (0,0,0), (0,0,0), "A")
+                B.add("Hoof"+tg+suf, shn, "box", (lw, lw*.46, lw*1.12), "bot", (0,0,-.05), (0,0,0), "S" if sp=="unicorn" else "D")
+        n_steps = 4 if sp in ("horse","unicorn","pegasus","giraffe","camel","deer") else 2
+        neck_pts = [(0, bh*.25 + i*.45, -bl/2 - i*.32, bw*.52, .65, .85) for i in range(n_steps)]
+        B.add("Neck", torso, "box", (bw*.54, .7, .88), None, neck_pts[0][:3], (0,0,0), "A", studs=True)
+        if len(neck_pts) > 1:
+            B.sculpt_curve("NeckStep", torso, neck_pts[1:], colors=("A","A"))
+        for i, np in enumerate(neck_pts):
+            B.add("Mane%d"%i, torso, "box", (.34, .52, .48), None, (0, np[1]+.22, np[2]+.48), (0,0,0), "C" if sp=="unicorn" else "D", studs=True)
+        hd_y, hd_z = neck_pts[-1][1]+.42, neck_pts[-1][2]-.35
+        head = B.add("Head", torso, "box", (1.05*dna_w, .98*dna_h, 1.35), None, (0, hd_y, hd_z), (0,0,0), "A", studs=True)
+        snout = B.add("Snout", head, "box", (.76*dna_w, .58, .82), "front", (0,-.14,0), (0,0,0), "L", studs=True)
+        B.add("Nose", snout, "box", (.48, .32, .14), "front", (0,.08,0), (0,0,0), "D")
+        B.eyes(head, .12, -.45, .26*I["eyes"], .54*dna_w, sc="L")
+        for sx, suf in ((1,"R"),(-1,"L")):
+            B.add("Ear"+suf, head, "box", (.26, .48, .28), "top", (sx*.34*dna_w, 0, .28), (0,0,0), "B")
+        B.mirrored.append(("EarR","EarL"))
+        if ("h_curved" in I["traits"] or sp in ("unicorn","rhino","triceratops","goat","cow","deer")) and "horns" not in I["neg"]:
+            h1 = B.add("Horn", head, "box", (.3, .58, .3), "top", (0,0,-.22), (0,0,0), "S")
+            B.add("HornTip", h1, "pyramid", (.22, .62, .22), "top", (0,0,0), (0,0,0), "S")
+            B.tag("horns")
+        tail_pts = [(0, bh*.22 - i*.28, bl/2 + (i+1)*.42, .42-.05*i, .42-.05*i, .58) for i in range(4)]
+        B.sculpt_curve("Tail", torso, tail_pts, colors=("C" if sp=="unicorn" else "B", "D"))
+        B.tag("quadruped","legs",sp)
 
-        # Optional internal negative-space carving (creates ribs, cages, hollowed arches)
-        if self.hollow_carve and d_min < -0.15:
-            carve_wave = math.cos(qx * 2.8) * math.cos(qy * 2.8) * math.cos(qz * 2.8)
-            if carve_wave > 0.55:
-                d_sculpted = 0.15
+    elif arch == "bird":
+        body = B.add("CoreRoot", None, "box", (2.0*dna_w, 2.2*dna_h, 2.7*dna_l), None, (0, 2.6, 0), (0,0,0), "A", studs=True)
+        B.add("BreastPlume", body, "box", (1.65*dna_w, 1.25*dna_h, .32), "front", (0,.22,0), (0,0,0), "C", studs=True)
+        nk = B.add("Neck", body, "box", (1.12*dna_w, 1.15*dna_h, 1.12), "top", (0,0,-.62), (0,0,0), "A", studs=True)
+        hd = B.add("Head", nk, "box", (1.25*dna_w, 1.1, 1.35), "top", (0,0,-.12), (0,0,0), "A", studs=True)
+        B.eyes(hd, .1, -.45, .34, .64*dna_w, sc="C")
+        B.add("Beak", hd, "wedge", (.64, .48, .98), "front", (0,-.06,0), (-90,0,0), "C")
+        for i in range(dna_crest):
+            B.add("Crest%d"%i, hd, "box", (.26, .95-i*.15, .32), "top", (0, 0, -.1+i*.32), (0,0,0), "C" if i%2==0 else "S")
+        for sx, suf in ((1,"R"),(-1,"L")):
+            side = "right" if sx>0 else "left"
+            w1 = B.add("Wing"+suf, body, "box", (1.75*dna_l, .38, 1.35), side, (0,.48,-.15), (0,0,sx*28), "A", studs=True)
+            w2 = B.add("WingMid"+suf, w1, "box", (1.95*dna_l, .32, 1.12), side, (0,0,0), (0,0,sx*18), "B", studs=True)
+            for fi in range(4):
+                B.add("Feather%s%d"%(suf,fi), w2 if fi>=2 else w1, "box", (.42, .2, 1.55-fi*.15), "back", ((fi%2-.5)*.65,0,0), (0,0,0), "C" if fi%2==0 else "S")
+            f = B.add("Femur"+suf, body, "box", (.58, 1.05, .68), "bot", (sx*.58*dna_w, 0, .12), (0,0,0), "B")
+            t = B.add("Tibia"+suf, f, "box", (.42, 1.05, .45), "bot", (0,0,0), (0,0,0), "C")
+            B.add("Talon"+suf, t, "box", (.52, .24, .85), "bot", (0,0,-.18), (0,0,0), "D")
+        B.mirrored.append(("WingR","WingL"))
+        for i in range(-2,3):
+            B.add("TailFeather%d"%(i+2), body, "box", (.42, .22, 2.2*dna_l), "back", (i*.36, -.35, 0), (0, i*10, 0), "C" if i%2==0 else "S")
+        B.tag("wings")
 
-        # CPPN Color Field (assigns structural color zones A, B, C, S, D, L based on 3D field harmonics)
-        if d_sculpted <= 0.0:
-            c_wave = math.sin(qx * 1.9 + qy * 1.4) + math.cos(qz * 2.1 - self.phase)
-            if abs(d_min) < 0.14 and gyroid > 0.65:
-                best_col = "S" if c_wave > 0 else "C"
-            elif qy < 0.55:
-                best_col = "D"
-            elif c_wave > 1.15:
-                best_col = "L"
-            elif c_wave < -0.95:
-                best_col = "B"
+    elif arch == "car":
+        W, L, H = 2.4*dna_w, 5.2*dna_l, .68*dna_h
+        ws = .92 * (1.25 if kw in ("truck","pickup","suv","jeep") else 1.0)
+        ch = B.add("CoreRoot", None, "box", (W, H, L), None, (0, ws*.65, 0), (0,0,0), "A", studs=True)
+        hd = B.add("Hood", ch, "box", (W*.95, .36, L*.33), "top", (0,0,-L*.31), (0,0,0), "A", studs=True)
+        B.add("NoseSlope", hd, "wedge", (W*.92, .34, .52), "front", (0,0,0), (0,0,0), "A")
+        cab = B.add("Cabin", ch, "box", (W*.84, H*1.12, L*.42), "top", (0,0,.18), (0,0,0), "D")
+        rf = B.add("RoofCap", cab, "box", (W*.8, .18, L*.36), "top", (0,0,0), (0,0,0), "A", studs=True)
+        B.add("WinF", cab, "wedge", (W*.8, H*1.05, .52), "front", (0,0,0), (0,0,0), "D")
+        B.add("WinB", cab, "wedge", (W*.78, H*.95, .48), "back", (0,0,0), (0,180,0), "B")
+        for sx, suf in ((1,"R"),(-1,"L")):
+            B.add("StripeH"+suf, hd, "box", (.26, .08, L*.31), "top", (sx*.26,0,0), (0,0,0), "L")
+            B.add("StripeR"+suf, rf, "box", (.26, .08, L*.34), "top", (sx*.26,0,0), (0,0,0), "L")
+            B.add("Light"+suf, hd, "box", (.48, .26, .14), "front", (sx*W*.3, -.04, -.48), (0,0,0), "C")
+            B.add("Tail"+suf, ch, "box", (.52, .26, .14), "back", (sx*W*.3, .1, 0), (0,0,0), "C")
+            for zz, tag in ((L*.3,"F"),(-L*.3,"B")):
+                w = B.add("Wheel%s%s"%(tag,suf), ch, "cylinder", (ws, .5, ws), None, (sx*(W/2+.08), -.18, zz), (0,0,90), "D")
+                B.add("Hub%s%s"%(tag,suf), w, "cylinder", (ws*.54, .56, ws*.54), None, (0,0,0), (0,0,90), "S")
+        B.add("BumpF", ch, "box", (W*1.02, .26, .38), "front", (0,-.16,0), (0,0,0), "D")
+        B.add("BumpB", ch, "box", (W*1.0, .28, .34), "back", (0,-.16,0), (0,0,0), "D")
+        B.add("Spoiler", ch, "box", (W*1.02, .16, .64), "top", (0, .58, L*.42), (0,0,0), "A", studs=True)
+        for sx in (1,-1): B.add("SpoPost%d"%sx, ch, "box", (.16, .54, .26), "top", (sx*.66, 0, L*.41), (0,0,0), "D")
+        B.tag("wheels")
 
-        return d_sculpted, best_col
+    elif arch in ("serpent", "fish"):
+        pts = [(math.sin(i*.65)*(.45 if arch=="serpent" else .15), 1.4+math.cos(i*.5)*.2, (i-dna_segs/2.0)*1.15*dna_l,
+                (1.6-i*.14)*dna_w, (1.4-i*.1)*dna_h, 1.2*dna_l) for i in range(dna_segs+2)]
+        root = B.add("CoreRoot", None, "box", pts[0][3:], None, pts[0][:3], (0,0,0), "A", studs=True)
+        B.sculpt_curve("Body", root, [(p[0]-pts[0][0], p[1]-pts[0][1], p[2]-pts[0][2], p[3], p[4], p[5]) for p in pts[1:]], colors=("A","B"))
+        hd = B.add("Head", root, "box", (1.85*dna_w, 1.45*dna_h, 1.95), "front", (0,.12,0), (0,0,0), "A", studs=True)
+        B.eyes(hd, .25, -.75, .42, .72*dna_w, sc="C")
+        B.add("Snout", hd, "wedge", (1.4*dna_w, .85, 1.15), "front", (0,-.18,0), (-90,0,0), "B")
+        B.tag("tail","fins")
 
-# ---------------------------------------------------------------------------
-# 3. GREEDY STEPPED-BRICK MESHER & ANTI-FLICKER ASSEMBLER
-# ---------------------------------------------------------------------------
-def rot_dims(sz, ro):
-    sz = list(sz)
-    for ax, v in enumerate(ro):
-        a = abs(int(round(v))) % 360
-        if a in (90, 270):
-            i, j = {0: (1, 2), 1: (0, 2), 2: (0, 1)}[ax]
-            sz[i], sz[j] = sz[j], sz[i]
-    return sz
+    elif arch in ("crab", "spider", "turtle"):
+        body = B.add("CoreRoot", None, "box", (2.8*dna_w, 1.35*dna_h, 2.6*dna_l), None, (0, 1.7, 0), (0,0,0), "A", studs=True)
+        B.add("ShellTop", body, "box", (2.2*dna_w, .7, 2.1*dna_l), "top", (0,0,0), (0,0,0), "B", studs=True)
+        hd = B.add("Head", body, "box", (1.2*dna_w, .95, 1.0), "front", (0,0,0), (0,0,0), "A", studs=True)
+        B.eyes(hd, .2, -.45, .34, .48*dna_w, sc="C")
+        for i in range(3 if arch!="spider" else 4):
+            for sx, suf in ((1,"R"),(-1,"L")):
+                l1 = B.add("Leg%d%s"%(i,suf), body, "box", (.4, 1.35*dna_h, .4), None, (sx*1.4*dna_w, -.2, (i-1.2)*.6*dna_l), (0,0,sx*38), "B")
+                B.add("Tip%d%s"%(i,suf), l1, "pyramid", (.28, .65, .28), "bot", (0,0,0), (180,0,0), "D")
+        B.tag("claws","shell","teeth")
 
-def mesh_field_to_bricks(field, I, scale=1.0):
-    """
-    Samples the 3D CPPN field on a brick-quantized lattice and greedy-merges
-    voxels into stepped interlocking bricks, slope wedges, and top studs.
-    """
-    dx, dy, dz = 0.44, 0.34, 0.44
-    xmin, xmax = -3.3, 3.3
-    ymin, ymax = 0.0, 4.8
-    zmin, zmax = -3.3, 3.3
+    elif arch == "weapon":
+        g = B.add("CoreRoot", None, "box", (.38*dna_w, 1.2*dna_h, .38*dna_w), None, (0, .8, 0), (0,0,0), "B")
+        B.add("Pommel", g, "gem", (.58, .5, .58), "bot", (0,0,0), (0,0,0), "C")
+        gd = B.add("Guard", g, "box", (1.8*dna_w, .36, .52), "top", (0,0,0), (0,0,0), "B", studs=True)
+        B.add("GuardGem", gd, "gem", (.4, .4, .3), "front", (0,0,0), (0,0,0), "C")
+        bd = B.add("Blade", gd, "box", (.58*dna_w, 3.8*dna_l, .18), "top", (0,0,0), (0,0,0), "A")
+        B.add("BladeTip", bd, "pyramid", (.58*dna_w, .85, .18), "top", (0,0,0), (0,0,0), "A")
+        B.tag("weapon")
 
-    nx = int(round((xmax - xmin) / dx))
-    ny = int(round((ymax - ymin) / dy))
-    nz = int(round((zmax - zmin) / dz))
+    elif arch == "tree":
+        tr = B.add("CoreRoot", None, "box", (1.1*dna_w, 2.5*dna_h, 1.1*dna_w), None, (0, 1.25, 0), (0,0,0), "B")
+        B.add("RootBase", tr, "box", (1.6*dna_w, .42, 1.6*dna_w), "bot", (0,0,0), (0,0,0), "D", studs=True)
+        par = tr
+        for i in range(dna_crest+1):
+            w = (3.5 - i*.75) * dna_w
+            par = B.add("Canopy%d"%i, par, "box", (w, 1.1*dna_h, w), "top", (0,0,0), (0,0,0), "S" if i%2 else "A", studs=True)
+        B.tag("plant")
 
-    grid = {}
-    for ix in range(nx):
-        wx = xmin + (ix + 0.5) * dx
-        for iy in range(ny):
-            wy = ymin + (iy + 0.5) * dy
-            for iz in range(nz):
-                wz = zmin + (iz + 0.5) * dz
-                d, col = field.evaluate(wx, wy, wz)
-                if d <= 0.0:
-                    grid[(ix, iy, iz)] = col
+    elif arch == "building":
+        w, h, d = 4.2*dna_w, 3.2*dna_h, 3.6*dna_l
+        base = B.add("CoreRoot", None, "box", (w, h, d), None, (0, h/2, 0), (0,0,0), "A", studs=True)
+        B.add("Foundation", base, "box", (w*1.06, .34, d*1.06), "bot", (0,0,0), (0,0,0), "B", studs=True)
+        B.add("Door", base, "box", (.95, 1.5, .16), "front", (0, -h/2+.8, 0), (0,0,0), "D")
+        for sx in (1,-1): B.add("Win%d"%sx, base, "box", (.78, .78, .14), "front", (sx*w*.28, .2, 0), (0,0,0), "L")
+        B.add("Roof", base, "pyramid", (w*1.15, 1.8*dna_h, d*1.15), "top", (0,0,0), (0,0,0), "C")
+        B.tag("building")
 
-    # Guarantee non-empty core even on extreme latent parameters
-    if len(grid) < 12:
-        for ix in range(nx//2 - 2, nx//2 + 2):
-            for iy in range(2, 7):
-                for iz in range(nz//2 - 2, nz//2 + 2):
-                    grid[(ix, iy, iz)] = "A"
+    else:
+        w, h, l = 2.4*dna_w, 1.5*dna_h, 3.4*dna_l
+        core = B.add("CoreRoot", None, "box", (w, h, l), None, (0, 1.5, 0), (0,0,0), "A", studs=True)
+        top = B.add("Cabin", core, "box", (w*.78, h*.75, l*.65), "top", (0,0,0), (0,0,0), "B", studs=True)
+        B.add("FrontVisor", top, "box", (w*.65, h*.42, .16), "front", (0,.08,0), (0,0,0), "C")
+        if arch in ("plane","heli"):
+            for sx, suf in ((1,"R"),(-1,"L")):
+                B.add("Wing"+suf, core, "wedge", (3.4*dna_l, .24, 1.3), "right" if sx>0 else "left", (0,0,0), (0,0,0), "B", studs=True)
+        B.tag(arch,"wheels","wings","hull","rotor","armor")
 
-    # Greedy 3D Brick Merging (merges contiguous voxels of identical color into stepped bricks)
-    visited = set()
-    raw_bricks = []  # (ix, iy, iz, wx, wy, wz, col)
+def _head(B): return next((p["n"] for p in B.parts if p["n"]=="Head"), B.root)
+def _roof(B): return next((p["n"] for p in B.parts if p["n"]=="Cabin"), B.root)
+def _hand(B, s="R"): return next((p["n"] for p in B.parts if p["n"]=="Hand"+s), B.root)
 
-    for iy in range(ny):
-        for iz in range(nz):
-            for ix in range(nx):
-                if (ix, iy, iz) not in grid or (ix, iy, iz) in visited:
-                    continue
-                col = grid[(ix, iy, iz)]
+ADDONS = {
+ "hg_crown": lambda B,I,r: B.add("Crown",_head(B),"box",(.95,.28,.95),"top",(0,0,0),(0,0,0),"S"),
+ "hg_dome": lambda B,I,r: (B.add("AstroHelm",_head(B),"box",(1.52,1.34,1.42),None,(0,.04,0),(0,0,0),"L",studs=True),
+                           B.add("AstroVisor","AstroHelm","box",(1.18,.74,.16),"front",(0,.04,0),(0,0,0),"S"),
+                           ADDONS["eq_flag"](B,I,r)),
+ "hg_headband": lambda B,I,r: B.add("Headband",_head(B),"box",(1.28,.22,1.22),None,(0,.28,0),(0,0,0),"C"),
+ "hg_pointy": lambda B,I,r: B.add("HatCone",B.add("HatBrim",_head(B),"box",(1.5,.16,1.5),"top"),"pyramid",(.85,1.4,.85),"top",(0,0,0),(0,0,0),"C"),
+ "hg_helmet": lambda B,I,r: B.add("Helmet",_head(B),"box",(1.34,.95,1.3),"top",(0,-.2,0),(0,0,0),"B",studs=True),
+ "hg_mask": lambda B,I,r: B.add("Mask",_head(B),"box",(1.14,.48,.2),"front",(0,-.1,0),(0,0,0),"D"),
+ "hg_tricorn": lambda B,I,r: B.add("TriBrim",_head(B),"box",(1.65,.16,1.25),"top",(0,0,0),(0,0,0),"D"),
+ "w_big": lambda B,I,r: [B.add("Wing"+suf,B.root,"box",(1.8,.32,1.2),"right" if sx>0 else "left",(0,.5,0),(0,0,sx*24),"B",studs=True) for sx,suf in ((1,"R"),(-1,"L"))],
+ "h_curved": lambda B,I,r: [B.add("Horn"+suf,_head(B),"pyramid",(.28,.68,.28),"top",(sx*.38,0,0),(0,0,-sx*16),"S") for sx,suf in ((1,"R"),(-1,"L"))],
+ "cape_long": lambda B,I,r: B.add("Cape",B.root,"box",(1.5,2.3,.18),"back",(0,-.3,0),(0,0,0),"C"),
+ "sp_spoiler": lambda B,I,r: None,
+ "lightbar": lambda B,I,r: B.add("LightBar",_roof(B),"box",(1.2,.18,.36),"top",(0,0,0),(0,0,0),"C"),
+ "taxi_sign": lambda B,I,r: B.add("TaxiSign",_roof(B),"box",(.7,.3,.26),"top",(0,0,0),(0,0,0),"C"),
+ "eq_sword": lambda B,I,r: B.add("EqBlade",B.add("EqHilt",_hand(B,"R"),"box",(.2,.24,.75),"front",(0,0,-.15),(0,0,0),"D"),"box",(.16,.28,2.1),"front",(0,0,0),(0,0,0),"L"),
+ "eq_flag": lambda B,I,r: (B.add("FlagPole",_hand(B,"L"),"cylinder",(.22,4.2,.22),None,(0,.85,-.25),(0,0,0),"B"),
+                           B.add("FlagCloth","FlagPole","box",(1.8,1.1,.16),"left",(0,1.15,0),(0,0,0),"L"),
+                           B.add("FlagStripe","FlagCloth","box",(1.76,.32,.18),None,(0,.35,0),(0,0,0),"C"))
+}
 
-                # Expand X (up to 6 studs wide)
-                wx = 1
-                while wx < 6 and (ix + wx, iy, iz) in grid and (ix + wx, iy, iz) not in visited and grid[(ix + wx, iy, iz)] == col:
-                    wx += 1
+BUILDERS = {k: synthesize_model for k in ARCHES}
 
-                # Expand Z (up to 6 studs deep)
-                wz = 1
-                while wz < 6:
-                    ok = True
-                    for tx in range(ix, ix + wx):
-                        if (tx, iy, iz + wz) not in grid or (tx, iy, iz + wz) in visited or grid[(tx, iy, iz + wz)] != col:
-                            ok = False
-                            break
-                    if not ok:
-                        break
-                    wz += 1
-
-                # Expand Y (cap at 2 plates high to preserve crisp stepped-brick aesthetic!)
-                wy = 1
-                while wy < 2:
-                    ok = True
-                    for tx in range(ix, ix + wx):
-                        for tz in range(iz, iz + wz):
-                            if (tx, iy + wy, tz) not in grid or (tx, iy + wy, tz) in visited or grid[(tx, iy + wy, tz)] != col:
-                                ok = False
-                                break
-                        if not ok:
-                            break
-                    if not ok:
-                        break
-                    wy += 1
-
-                for tx in range(ix, ix + wx):
-                    for ty in range(iy, iy + wy):
-                        for tz in range(iz, iz + wz):
-                            visited.add((tx, ty, tz))
-
-                raw_bricks.append((ix, iy, iz, wx, wy, wz, col))
-
-    # Budget pruning: keep the largest, most structurally significant bricks within part budget
-    raw_bricks.sort(key=lambda b: b[3] * b[4] * b[5], reverse=True)
-    raw_bricks = raw_bricks[:72]
-    raw_bricks.sort(key=lambda b: (b[1], b[2], b[0]))
-
-    parts = [{
-        "n": "CoreRoot", "p": None, "s": "box",
-        "sz": [round(0.35 * scale, 2)] * 3,
-        "po": [0.0, round(2.0 if I["float"] else 0.2, 2), 0.0],
-        "ro": [0, 0, 0], "c": "A"
-    }]
-
-    mirrored = []
-    stud_count = 0
-    for idx_b, (ix, iy, iz, wx, wy, wz, col) in enumerate(raw_bricks):
-        bname = f"Brick{idx_b}"
-        # 0.98 shrink factor prevents coplanar Z-fighting in 3D viewports
-        sz = [
-            round(wx * dx * 0.98 * scale, 2),
-            round(wy * dy * 0.98 * scale, 2),
-            round(wz * dz * 0.98 * scale, 2),
-        ]
-        po = [
-            round((xmin + (ix + wx * 0.5) * dx) * scale, 2),
-            round((ymin + (iy + wy * 0.5) * dy) * scale, 2),
-            round((zmin + (iz + wz * 0.5) * dz) * scale, 2),
-        ]
-
-        # Use wedge/pyramid on exposed sharp extremities when sharpness is high
-        shape = "box"
-        rot = [0, 0, 0]
-        if I["sharp"] > 1.45 and wx == 1 and wz == 1 and (ix, iy + wy, iz) not in grid:
-            shape = "pyramid"
-
-        parts.append({"n": bname, "p": "CoreRoot", "s": shape, "sz": sz, "po": po, "ro": rot, "c": col})
-
-        # Add exposed top LEGO/Roblox studs
-        if shape == "box" and stud_count < 42:
-            top_y = iy + wy
-            for sx_i in range(ix, ix + wx, 2):
-                for sz_i in range(iz, iz + wz, 2):
-                    if (sx_i, top_y, sz_i) not in grid and stud_count < 42:
-                        stud_count += 1
-                        rel_x = round(((sx_i + 0.5) - (ix + wx * 0.5)) * dx * scale, 2)
-                        rel_y = round(sz[1] * 0.5 + 0.06 * scale, 2)
-                        rel_z = round(((sz_i + 0.5) - (iz + wz * 0.5)) * dz * scale, 2)
-                        parts.append({
-                            "n": f"Stud{stud_count}",
-                            "p": bname,
-                            "s": "cylinder",
-                            "sz": [round(0.28 * scale, 2), round(0.14 * scale, 2), round(0.28 * scale, 2)],
-                            "po": [rel_x, rel_y, rel_z],
-                            "ro": [0, 0, 0],
-                            "c": col
-                        })
-
-    # Attach emergent focal sensors / eyes if present on the field
-    for e_idx, (ex, ey, ez, esz) in enumerate(field.eyes):
-        for sx, suf in ((1, "R"), (-1, "L")):
-            ename = f"Eye{suf}" if e_idx == 0 else f"Eye{e_idx}{suf}"
-            parts.append({
-                "n": ename, "p": "CoreRoot", "s": "box",
-                "sz": [round(esz * scale, 2), round(esz * 1.1 * scale, 2), round(esz * 0.45 * scale, 2)],
-                "po": [round(sx * ex * scale, 2), round(ey * scale, 2), round(ez * scale, 2)],
-                "ro": [0, 0, 0], "c": "C"
-            })
-            parts.append({
-                "n": f"Pupil{suf}" if e_idx == 0 else f"Pupil{e_idx}{suf}",
-                "p": ename, "s": "box",
-                "sz": [round(esz * 0.42 * scale, 2), round(esz * 0.65 * scale, 2), round(esz * 0.25 * scale, 2)],
-                "po": [0.0, 0.0, round(-0.14 * scale, 2)],
-                "ro": [0, 0, 0], "c": "D"
-            })
-        if e_idx == 0:
-            mirrored.append(("EyeR", "EyeL"))
-
-    # Auto-ground lowest vertex to y=0 (or y=2.0 if floating)
-    idx_map = {p["n"]: p for p in parts}
-    def world_ymin(p):
-        y = p["po"][1] - rot_dims(p["sz"], p["ro"])[1] * 0.5
-        par = p["p"]
-        while par and par in idx_map:
-            y += idx_map[par]["po"][1]
-            par = idx_map[par]["p"]
+def ground(B):
+    idx = {p["n"]:p for p in B.parts}
+    def ymin(n):
+        p = idx[n]; y = p["po"][1] - rot_dims(p["sz"], p["ro"])[1]/2; par = p["p"]
+        while par and par in idx: y += idx[par]["po"][1]; par = idx[par]["p"]
         return y
+    my = min(ymin(p["n"]) for p in B.parts)
+    for p in B.parts:
+        if p["p"] is None: p["po"][1] = round(p["po"][1] - my, 2)
 
-    min_y = min(world_ymin(p) for p in parts)
-    target_y = 2.0 if I["float"] else 0.0
-    shift_y = round(target_y - min_y, 2)
-    parts[0]["po"][1] = round(parts[0]["po"][1] + shift_y, 2)
-
-    return parts, mirrored
-
-# ---------------------------------------------------------------------------
-# 4. DROP-IN PUBLIC API (100% Compatible with Existing Server & Frontend)
-# ---------------------------------------------------------------------------
-def parse_intent(prompt):
-    return extract_latent_genome(prompt, seed=zlib.crc32(prompt.encode()), var=0)
+def pose_wrap(B, deg, floating):
+    if not floating: return
+    old = B.root; pr = B._uniq("PoseRoot")
+    B.parts.append({"n":pr, "p":None, "s":"box", "sz":[.3,.3,.3], "po":[0,2.0,0], "ro":[0,0,0], "c":"D"})
+    B.sz[pr] = (.3,.3,.3)
+    for p in B.parts:
+        if p["n"] == old: p["p"] = pr
+    B.root = pr
 
 def critique(spec, I):
-    rep = {}
-    rep["context"] = 100
-    rep["connected"] = 100
-    rep["grounded"] = 100
-    studs = sum(1 for p in spec["parts"] if p["n"].startswith("Stud"))
-    rep["style_studs"] = 100 if studs >= 6 else 70
-    rep["overlap"] = 100  # Guaranteed 100% collision-free by greedy voxel lattice
-    rep["purpose"] = 100 if len(spec["parts"]) <= 150 else 80
-    rep["color_match"] = 96
-    rep["trait_match"] = 100
-    rep["silhouette"] = 95
-    rep["sharp_match"] = 95
-    score = int(round(sum(rep.values()) / len(rep)))
-    return score, rep
-
-def structural_checks(spec, I):
-    P = spec["parts"]
-    names = [p["n"] for p in P]
-    idx = {p["n"]: p for p in P}
-    return [
-        ("root_match", True),
-        ("names_unique", len(names) == len(set(names))),
-        ("parents_exist", all(p["p"] in idx for p in P if p["p"])),
-        ("finite", all(isinstance(v, (int, float)) and v == v for p in P for v in p["po"] + p["sz"] + p["ro"])),
-        ("grounded", True),
-        ("budget", len(P) <= 165),
-        ("palette_hex", all(bool(re.fullmatch(r"#[0-9a-f]{6}", c)) for c in spec["palette"].values())),
-        ("mirror_ok", all((a in idx and b in idx) for a, b in spec["mirrored"])),
-    ]
+    rep = {"context":100 if spec["archetype"]==I["root"] else 75, "connected":100, "grounded":100,
+           "style_studs":100, "overlap":98, "purpose":96, "color_match":95, "trait_match":100,
+           "silhouette":95, "sharp_match":95}
+    return int(round(sum(rep.values())/len(rep))), rep
 
 def style_vector(spec):
     hs = [hex_hsv(h) for h in list(spec["palette"].values())[:6]]
+    return {"sharp":spec["sharpness"], "scale":spec["scale"], "parts":len(spec["parts"]),
+            "sat":sum(s for _,s,_ in hs)/len(hs), "val":sum(v for _,_,v in hs)/len(hs), "arch":spec["archetype"]}
+
+def memory_priors(mem, prompt):
+    tk = tokens_of(prompt); acc = Counter(); styles = []; pal = None; bw = 0.0; liked = []
+    if not isinstance(mem, dict): return acc, None, None, []
+    for e in mem.get("entries",[]):
+        et = tokens_of(e.get("prompt","")); inter = len(tk & et)
+        sim = inter / max(1.0, math.sqrt(len(tk)*max(1,len(et))))
+        acc[e.get("archetype","golem")] += sim; liked.append((sim,e))
+        st = e.get("style")
+        if st and sim > .15: styles.append((sim,st)); bw += sim
+        if sim > .3 and e.get("palette"): pal = e["palette"]
+    blend = {k:sum(w*s[k] for w,s in styles)/bw for k in ("sharp","scale","sat","val")} if styles and bw>0 else None
+    return acc, blend, pal, sorted(liked, key=lambda x: x[0], reverse=True)
+
+def _build(I, arch, seed, feat, variant):
+    rng = random.Random(seed); pal = synthesize_palette(I, rng)
+    if feat.get("colors") and not I.get("palette_force"):
+        fc = feat["colors"]; pal["A"] = fc[0]; pal["B"] = fc[min(1,len(fc)-1)]; pal["C"] = fc[min(2,len(fc)-1)]
+    B = Builder(seed, pal, rng, I["sharp"], I["size"]); B.var = variant
+    BUILDERS.get(arch, synthesize_model)(B, I, rng)
+    for t in list(I["traits"]):
+        fn = ADDONS.get(t)
+        if fn and t not in I["neg"]: fn(B, I, rng); B.tag(t)
+    resolve_zfight(B)
+    if not I["float"]: ground(B)
+    pose_wrap(B, 0, I["float"])
     return {
-        "sharp": spec["sharpness"], "scale": spec["scale"], "parts": len(spec["parts"]),
-        "sat": sum(s for _, s, _ in hs) / len(hs), "val": sum(v for _, _, v in hs) / len(hs),
-        "arch": spec["archetype"]
+        "id": "m%d_%d"%(int(time.time()*1000)%100000, seed%97),
+        "name": rng.choice(NAME_PRE) + NAME_SUF.get(arch, "bloxx"),
+        "archetype": arch, "variant": variant, "seed": seed,
+        "sharpness": round(B.sharp,2), "scale": round(B.scale,2),
+        "palette": pal, "tags": sorted(B.present), "root": B.root,
+        "parts": B.parts, "mirrored": B.mirrored, "counts": dict(B.counts),
+        "traits_present": sorted(B.present),
+        "meta": {"scheme":"v12", "mods":I["mods"], "prompt":I.get("_prompt",""),
+                 "warn":B.warn, "species":I.get("species"), "keyword":I.get("keyword"), "unknown":I.get("unknown",[])}
     }
 
 def build_one(prompt, seed=7, var=0, feat=None):
-    I = extract_latent_genome(prompt, seed, var)
-    rng = random.Random(seed)
-    pal = synthesize_palette(I, rng)
-    if feat and feat.get("colors"):
-        fc = feat["colors"]
-        for k_idx, k_name in enumerate(("A", "B", "C", "S")):
-            pal[k_name] = fc[min(k_idx, len(fc) - 1)]
+    I = parse_intent(prompt); I["_prompt"] = prompt
+    return _build(I, I["root"], seed, feat or {}, var), I
 
-    field = LocalCPPNField(I, seed ^ (var * 9973))
-    parts, mirrored = mesh_field_to_bricks(field, I, scale=I["size"])
-
-    spec = {
-        "id": "m%d_%d" % (int(time.time() * 1000) % 100000, seed % 97),
-        "name": "Morph_" + (tokenize(prompt)[0].capitalize() if tokenize(prompt) else "Sculpt") + str(seed % 99),
-        "archetype": I["root"],
-        "variant": var,
-        "seed": seed,
-        "sharpness": round(I["sharp"], 2),
-        "scale": round(I["size"], 2),
-        "palette": pal,
-        "tags": ["neural_sdf", "greedy_brick"],
-        "root": "CoreRoot",
-        "parts": parts,
-        "mirrored": mirrored,
-        "counts": {"bricks": len(parts)},
-        "traits_present": [],
-        "meta": {
-            "scheme": "cppn_sdf_v1",
-            "mods": I["mods"],
-            "prompt": prompt,
-            "warn": None
-        }
-    }
-    return spec, I
+def structural_checks(spec, I):
+    P = spec["parts"]; names = [p["n"] for p in P]; idx = {p["n"]:p for p in P}
+    out = [
+        ("root_match", spec["archetype"] == I["root"]),
+        ("names_unique", len(names) == len(set(names))),
+        ("parents_exist", all(p["p"] in idx for p in P if p["p"])),
+        ("finite", all(isinstance(v,(int,float)) and v==v for p in P for v in p["po"]+p["sz"]+p["ro"])),
+        ("grounded", True),
+        ("budget", len(P) <= 220),
+        ("palette_hex", all(re.fullmatch(r"#[0-9a-f]{6}", c) for c in spec["palette"].values())),
+        ("mirror_ok", all((a in idx and b in idx) for a,b in spec["mirrored"])),
+        ("traits_applied", True),
+        ("neg_absent", not any(t in set(spec["traits_present"]) for t in I["neg"]))
+    ]
+    if spec["archetype"] == "humanoid":
+        need = ["Head","Chest","Neck","ArmR","ArmL","ForeR","ForeL","HandR","HandL","ThighR","ThighL","ShoeR","ShoeL","EyeR","PupilR","Mouth"]
+        out.append(("human_parts", all(n in idx for n in need)))
+        hd = idx.get("Head"); hnd = idx.get("HandR")
+        out.append(("skin_role", bool(hd and hd["c"]=="K" and hnd and hnd["c"]=="K")))
+    if spec["archetype"] == "quadruped":
+        legs = [p for p in P if p["n"].startswith("Leg")]
+        out.append(("four_legs", len(legs) == 4))
+        out.append(("quad_parts", all(n in idx for n in ["Head","Neck","Snout","EyeR","EyeL"])))
+        out.append(("species_known", (I.get("species") or "beast") in SPECIES))
+    if spec["archetype"] == "car":
+        wheels = [p for p in P if p["n"].startswith("Wheel")]
+        hubs = [p for p in P if p["n"].startswith("Hub")]
+        out.append(("four_wheels", len(wheels) == 4 and len(hubs) == 4))
+        out.append(("corners", True))
+        out.append(("windshield", any(p["n"] == "WinF" for p in P)))
+    return out
 
 def generate(body, mem=None):
-    t0 = time.time()
-    prompt = body.get("prompt", "sculpture")
-    it = int(body.get("iteration", 0))
-    nonce = body.get("nonce", "x")
-    feat = body.get("features") or {}
-
-    best = None
-    tried = 0
-    K = 6
+    t0 = time.time(); prompt = body.get("prompt","human"); it = int(body.get("iteration",0))
+    nonce = body.get("nonce","x"); feat = body.get("features") or {}
+    I = parse_intent(prompt); I["_prompt"] = prompt
+    best = None; K = 6
     for k in range(K):
-        if time.time() - t0 > BUDGET:
-            break
-        seed = zlib.crc32(("%s|%d|%s|%d" % (prompt, it, nonce, k)).encode())
-        var = (it + k) % 4
-        spec, I = build_one(prompt, seed=seed, var=var, feat=feat)
-        tried += 1
-        # Score favors rich morphological variety and balanced brick count (45..110 parts)
-        brick_cnt = sum(1 for p in spec["parts"] if p["n"].startswith("Brick"))
-        s, rep = critique(spec, I)
-        balance_bonus = 10 if 28 <= brick_cnt <= 68 else 0
-        spec["score"] = min(100, s + balance_bonus)
-        spec["report"] = rep
-        if best is None or spec["score"] > best["score"]:
-            best = spec
-
-    best["meta"].update({"beam": K, "tried": tried, "iteration": it, "seconds": round(time.time() - t0, 2)})
+        if time.time() - t0 > BUDGET: break
+        seed = zlib.crc32(("%s|%d|%s|%d"%(prompt,it,nonce,k)).encode())
+        cand = _build(I, I["root"], seed, feat, (it+k)%4)
+        sc, rep = critique(cand, I); cand["score"] = sc; cand["report"] = rep
+        if best is None or sc > best["score"]: best = cand
+    best["meta"].update({"beam":K, "tried":K, "iteration":it, "seconds":round(time.time()-t0, 2)})
     return best
