@@ -1,17 +1,15 @@
-"""BrickForge AI v6 — TESTED BUILD.
-Fixes: car axes, wheel rotation, mirror-in-loop duplication, variant diversity
-(rebuilds change SHAPE not color), rotated-bbox ground solver, addon tagging,
-sibling-overlap penalty. Style DNA: studs + sockets + ground + bold silhouettes."""
+"""BrickForge AI v7 — human-readable characters + vehicle bodies + test API.
+Skin/shirt/pants roles, human proportions, 5 car bodies + vehicle mods,
+build_one()/structural_checks() for the local 10k-test harness."""
 import math, random, re, colorsys, zlib, time
 from collections import Counter
 BUDGET = 7.0
-
-# ================= 1. CONTEXT TABLES =================
 ROOTS = {
  "humanoid": ["human","humans","man","woman","boy","girl","guy","dude","person","people","hero",
    "villain","wizard","mage","knight","soldier","ninja","pirate","doctor","teacher","driver",
    "engineer","chef","pilot","astronaut","farmer","builder","artist","musician","athlete",
-   "boxer","karate","fighter","guard","police","thief","robot","cyborg","android","mech","alien"],
+   "boxer","karate","fighter","guard","police","thief","robot","cyborg","android","mech","alien",
+   "anime","character","avatar","kid","child"],
  "octopus": ["octopus","squid","kraken","cephalopod","ink"],
  "serpent": ["snake","serpent","dragon","wyrm","eel","viper","wyvern","cobra"],
  "fish": ["fish","shark","koi","bass","piranha","manta","goldfish","whale","dolphin"],
@@ -21,7 +19,7 @@ ROOTS = {
  "golem": ["golem","titan","colossus","elemental","construct"],
  "turtle": ["turtle","tortoise","snail"],
  "jelly": ["jelly","jellyfish","medusa","blob","slime"],
- "car": ["car","vehicle","auto","sedan","coupe","truck","van","taxi","racecar"],
+ "car": ["car","vehicle","auto","sedan","coupe","truck","van","taxi","racecar","bus"],
  "bike": ["bike","motorcycle","scooter"],
  "boat": ["boat","ship","yacht","canoe"],
  "plane": ["plane","airplane","jet","aircraft","glider"],
@@ -37,13 +35,19 @@ MODS = {
  "royal":{"theme":"gold","add":"hg_crown"},"icy":{"theme":"ice","mat":"ice","add":"hg_crystal"},
  "fire":{"theme":"lava","mat":"lava"},"golden":{"theme":"gold"},"dark":{"theme":"dark"},
  "neon":{"theme":"neon"},"pastel":{"theme":"pastel"},"floating":{"float":True,"pose":-6},
- "sport":{"add":"sp_spoiler","theme":"neon"},"offroad":{"prop":{"wheels":1.5,"lift":1.3}},
+ "sport":{"carbody":"sport","add":"sp_spoiler","theme":"neon"},
+ "offroad":{"prop":{"wheels":1.5,"lift":1.3}},
+ "taxi":{"carbody":"sedan","add":"taxi_sign","theme":"gold"},
+ "police":{"carbody":"sedan","add":"lightbar","theme":"navy"},
+ "van":{"carbody":"van"},"bus":{"carbody":"van"},"buggy":{"carbody":"buggy"},
+ "beetle":{"carbody":"buggy"},"monster":{"carbody":"pickup","prop":{"wheels":1.6,"lift":1.4}},
+ "anime":{"eyes":1.5,"add":"hair_spiky"},
  "karate":{"add":"hg_headband","pose":-12},"wizard":{"add":"hg_pointy","theme":"mystic"},
  "knight":{"add":"hg_helmet","theme":"steel"},"ninja":{"add":"hg_mask","theme":"dark"},
  "pirate":{"add":"hg_tricorn","theme":"sea"},"chef":{"add":"hg_toque"},
  "driver":{"add":"hg_cap","theme":"race"},"engineer":{"add":"hg_hardhat","theme":"warn"},
  "pilot":{"add":"hg_cap","theme":"sky"},"astronaut":{"add":"hg_dome"},
- "doctor":{"add":"hg_cap"},"teacher":{"add":"hg_glasses"},"police":{"add":"hg_peak","theme":"navy"},
+ "doctor":{"add":"hg_cap"},"teacher":{"add":"hg_glasses"},"policecap":{"add":"hg_peak"},
  "wings":{"add":"w_big"},"horns":{"add":"h_curved"},"cape":{"add":"cape_long"},
  "spiky":{"sharp":0.9},"smooth":{"sharp":-0.6}}
 THEMES = {"gold":(45,.85,.75),"dark":(265,.25,.16),"neon":(310,1,.95),"ice":(195,.4,.92),
@@ -58,18 +62,20 @@ COLOR_WORDS = {"red":(0,.85,.62),"crimson":(348,.9,.55),"orange":(24,.9,.62),"ye
  "navy":(225,.8,.3),"purple":(275,.7,.55),"pink":(330,.7,.75),"white":(0,0,.96),"black":(260,.2,.14),
  "grey":(220,.05,.55),"gray":(220,.05,.55),"brown":(25,.6,.42),"mint":(160,.45,.8)}
 NEG = {"no","without","not","never","minus"}
+SKIN = ["#f2c9a0","#e0ac7e","#c68863","#8d5a3b","#6b4226","#ffdfc4"]
+HAIR = ["#2b1d12","#4a2f1b","#6b4423","#141414","#d9a441","#c2652e","#8a8a8a","#f2e2c4"]
+ANIME_HAIR = ["#ff7ab8","#7ad8ff","#ffd166","#b48cff"]
 NAME_PRE = ["Brick","Stud","Krag","Zor","Bloxx","Torv","Pixl","Grim","Lux","Vex","Snap","Mek",
  "Vor","Quil","Rune","Ember","Frost","Thorn","Gale","Umber"]
 NAME_SUF = {"octopus":"pus","serpent":"enth","fish":"ish","bird":"wing","crab":"claw","spider":"ling",
  "golem":"mok","humanoid":"guard","turtle":"shell","jelly":"meduse","car":"runner","bike":"cycle",
  "boat":"wave","plane":"wing","heli":"rotor","tank":"tread"}
-
-# ================= 2. PARSER =================
 def tokenize(t): return re.findall(r"[a-z]+", t.lower())
 def parse_intent(prompt):
     raw = prompt.lower(); toks = tokenize(raw)
     I = {"root":None,"mods":[],"traits":{},"neg":set(),"colors":[],"size":1.0,"sharp":1.0,
-         "pose":0,"mat":None,"float":False,"prop":{},"eyes":1.0,"palette_force":None,"var":None}
+         "pose":0,"mat":None,"float":False,"prop":{},"eyes":1.0,"palette_force":None,"var":None,
+         "carbody":None}
     for phrase,cfg in SPECIFICS.items():
         if phrase in raw:
             I.update({k:v for k,v in cfg.items() if k!="palette"})
@@ -87,6 +93,7 @@ def parse_intent(prompt):
         I["sharp"]+=m.get("sharp",0); I["size"]*=m.get("scale",1.0); I["pose"]+=m.get("pose",0)
         if m.get("float"): I["float"]=True
         if m.get("mat"): I["mat"]=m["mat"]
+        if m.get("carbody"): I["carbody"]=m["carbody"]
         if m.get("theme"): I["colors"].append(THEMES[m["theme"]])
         if m.get("eyes"): I["eyes"]*=m["eyes"]
         if m.get("add"): I["traits"][m["add"]]=1
@@ -99,8 +106,6 @@ def parse_intent(prompt):
         if w in toks: I["colors"].append(h)
     I["sharp"]=max(0.2,min(2.6,I["sharp"]))
     return I
-
-# ================= 3. MATH / COLOR =================
 def clamp(x,a,b): return max(a,min(b,x))
 def hsv_hex(h,s,v):
     h%=360; r,g,b=colorsys.hsv_to_rgb(h/360.0,clamp(s,0,1),clamp(v,0,1))
@@ -111,8 +116,7 @@ def hex_hsv(hx):
 def hue_dist(a,b): d=abs(a-b)%360; return min(d,360-d)
 GOLD=137.5077640500378
 def phyllo(i,n,sp):
-    r=sp*math.sqrt((i+.5)/n); t=math.radians(i*GOLD); return r*math.sin(t),r*math.cos(theta_fix(t))
-def theta_fix(t): return t
+    r=sp*math.sqrt((i+.5)/n); t=math.radians(i*GOLD); return r*math.sin(t),r*math.cos(t)
 def rot_dims(sz,ro):
     sz=list(sz)
     for ax,v in enumerate(ro):
@@ -121,18 +125,26 @@ def rot_dims(sz,ro):
             i,j={0:(1,2),1:(0,2),2:(0,1)}[ax]; sz[i],sz[j]=sz[j],sz[i]
     return sz
 def synthesize_palette(I,rng):
-    if I["palette_force"]: return dict(I["palette_force"])
+    if I["palette_force"]:
+        P=dict(I["palette_force"]); P.setdefault("K",SKIN[0]); P.setdefault("H",HAIR[0])
+        P.setdefault("P",P.get("D","#333333")); return P
     if I["colors"]: h,s,v=I["colors"][0]
     else: h,s,v=(rng.choice([0,25,45,140,175,205,250,285,320]),.65,.6)
     if I["mat"]=="metal": s,v=.15,.75
     if I["mat"]=="ice": h,s,v=195,.4,.93
     if I["mat"]=="lava": h,s,v=12,.95,.8
     off=rng.choice([180,28,120,150])
-    return {"A":hsv_hex(h,s*.85,v),"B":hsv_hex(h+rng.choice([-25,25]),s*.7,min(1,v*1.2)),
-      "C":hsv_hex(h+off,max(.5,s),min(1,v*1.35)),"S":hsv_hex(h+off+rng.choice([-30,30]),max(.45,s*.9),min(1,v*1.1)),
-      "D":hsv_hex(h,min(1,s*1.05),max(.1,v*.4)),"L":hsv_hex(h+15,max(.06,s*.35),min(1,v*1.55))}
-
-# ================= 4. BUILDER =================
+    P={"A":hsv_hex(h,s*.85,v),"B":hsv_hex(h+rng.choice([-25,25]),s*.7,min(1,v*1.2)),
+       "C":hsv_hex(h+off,max(.5,s),min(1,v*1.35)),"S":hsv_hex(h+off+rng.choice([-30,30]),max(.45,s*.9),min(1,v*1.1)),
+       "D":hsv_hex(h,min(1,s*1.05),max(.1,v*.4)),"L":hsv_hex(h+15,max(.06,s*.35),min(1,v*1.55))}
+    if I["root"]=="humanoid":
+        if I["mat"]=="metal" or "robot" in I["mods"] or "cyborg" in I["tokens"]: P["K"]=hsv_hex(h,.15,.75)
+        elif "alien" in I["mods"]: P["K"]=hsv_hex(140,.5,.7)
+        else: P["K"]=rng.choice(SKIN)
+        P["H"]=rng.choice(ANIME_HAIR) if "anime" in I["mods"] else rng.choice(HAIR)
+        P["P"]=hsv_hex(h,min(1,s*.6),max(.15,v*.45))
+    else: P["K"]=P["A"]; P["H"]=P["B"]; P["P"]=P["D"]
+    return P
 FACES={"top":(0,1,0),"bot":(0,-1,0),"front":(0,0,-1),"back":(0,0,1),"right":(1,0,0),"left":(-1,0,0)}
 class Builder:
     def __init__(self,seed,pal,rng,sharp,scale):
@@ -186,8 +198,7 @@ class Builder:
     def chain(self,prefix,parent,n,sizes,colors,pitches,face="bot"):
         par=parent;outs=[]
         for i in range(n):
-            nm=self.add("%s%d"%(prefix,i),par,"box",sizes[i],face,
-                        (0,0,0) if i else (0,0,0),(pitches[i],0,0),colors[i%len(colors)])
+            nm=self.add("%s%d"%(prefix,i),par,"box",sizes[i],face,(0,0,0),(pitches[i],0,0),colors[i%len(colors)])
             outs.append(nm);par=nm;face="bot"
         return outs
     def ring(self,prefix,parent,n,radius,y,size,color,child=None):
@@ -199,9 +210,9 @@ class Builder:
             outs.append(b)
             if child: child(self,b,i)
         return outs
-    def eyes(self,parent,y,z,s,bx=.75):
+    def eyes(self,parent,y,z,s,bx=.75,sc="C"):
         for sx,suf in ((1,"R"),(-1,"L")):
-            e=self.add("Eye"+suf,parent,"box",(s,s*1.15,s*.4),None,(sx*bx,y,z),(0,0,0),"C")
+            e=self.add("Eye"+suf,parent,"box",(s,s*1.15,s*.4),None,(sx*bx,y,z),(0,0,0),sc)
             self.add("Pupil"+suf,e,"gem",(s*.45,s*.55,s*.3),None,(0,0,-.25),(0,0,0),"D")
         self.mirrored.append(("EyeR","EyeL"))
     def tag(self,*t):
@@ -223,11 +234,13 @@ def pose_wrap(B,deg,floating):
     for p in B.parts:
         if p["n"]==old: p["p"]=pr
     B.root=pr
-
-# ================= 5. BOLD ADD-ONS =================
 def _head(B):
     for p in B.parts:
         if p["n"]=="Head": return "Head"
+    return B.root
+def _roof(B):
+    for p in B.parts:
+        if p["n"]=="Cabin": return "Cabin"
     return B.root
 def add_brow_evil(B,I,r):
     for sx,suf in ((1,"R"),(-1,"L")):
@@ -256,6 +269,13 @@ def add_hg_glasses(B,I,r): B.add("Glasses",_head(B),"box",(1.0,.22,.15),"front",
 def add_hg_headband(B,I,r): B.add("Headband",_head(B),"box",(1.25,.22,1.25),"top",(0,-.25,0),(0,0,0),"C")
 def add_hg_crystal(B,I,r):
     for i in range(3): B.add("Crys%d"%i,_head(B),"pyramid",(.25,.9-i*.2,.25),"top",((i-1)*.35,.05,.2),(0,0,0),"C")
+def add_hair_spiky(B,I,r):
+    for i in range(4): B.add("HairSpike%d"%i,_head(B),"pyramid",(.22,.6,.22),"top",((i-1.5)*.3,0,-.1),(0,0,0),"H")
+def add_taxi_sign(B,I,r): B.add("TaxiSign",_roof(B),"box",(.7,.3,.25),"top",(0,.05,0),(0,0,0),"C")
+def add_lightbar(B,I,r):
+    b=B.add("LightBar",_roof(B),"box",(1.2,.18,.35),"top")
+    B.add("LampR",b,"gem",(.3,.3,.3),"top",(.35,.1,0),(0,0,0),"C")
+    B.add("LampL",b,"gem",(.3,.3,.3),"top",(-.35,.1,0),(0,0,0),"S")
 def add_w_big(B,I,r):
     for sx,suf in ((1,"R"),(-1,"L")):
         w=B.add("Wing"+suf,B.root,"box",(1.6,.35,1.0),None,(sx*1.2,1.0,.4),(0,0,sx*20),"B")
@@ -275,36 +295,37 @@ ADDONS={"brow_evil":add_brow_evil,"hg_crown":add_hg_crown,"hg_pointy":add_hg_poi
  "hg_helmet":add_hg_helmet,"hg_mask":add_hg_mask,"hg_tricorn":add_hg_tricorn,"hg_toque":add_hg_toque,
  "hg_cap":add_hg_cap,"hg_hardhat":add_hg_hardhat,"hg_dome":add_hg_dome,"hg_peak":add_hg_peak,
  "hg_glasses":add_hg_glasses,"hg_headband":add_hg_headband,"hg_crystal":add_hg_crystal,
+ "hair_spiky":add_hair_spiky,"taxi_sign":add_taxi_sign,"lightbar":add_lightbar,
  "w_big":add_w_big,"h_curved":add_h_curved,"cape_long":add_cape_long,"sp_spoiler":add_sp_spoiler}
-
-# ================= 6. BUILDERS (v6: correct axes, variants, no dupes) =================
 def b_humanoid(B,I,r):
     p=I["prop"];v=B.var
-    cw=1.7*p.get("chest",1.0)*(1.15 if v==2 else .92 if v==1 else 1.0)
-    lw=p.get("limbs",1.0)*(1.1 if v==2 else .9 if v==1 else 1.0)
-    hw=1.25*p.get("head",1.0)*(1.12 if v==0 else 1.0)
-    al=1.0*lw*p.get("arms",1.0); ll=1.05*lw*(1.15 if v==3 else 1.0)
-    B.add("HumanoidRootPart",None,"box",(cw*.95,.55,1.0),None,(0,0,0),(0,0,0),"A",studs=True)
-    torso=B.add("Chest","HumanoidRootPart","box",(cw,1.9,1.0),"top",(0,.05,0),(0,0,0),"B",studs=True)
-    neck=B.add("Neck",torso,"box",(.5,.3,.5),"top")
-    hd=B.add("Head",neck,"box",(hw,1.25,hw*.95),"top",(0,.05,0),(0,0,0),"A")
-    B.eyes(hd,.12,-.62,.34*I["eyes"],.38*hw/1.25)
-    B.add("Mouth",hd,"box",(.5,.12,.12),"front",(0,-.38,-.02),(0,0,0),"D")
-    if "hair" not in I["neg"]:
-        B.add("HairTop",hd,"box",(hw*1.05,.3,hw),"top",(0,0,.05),(0,0,0),"B",studs=True)
-        if v==0: B.add("HairBack",hd,"box",(hw*1.02,.9,.25),"back",(0,-.1,.05),(0,0,0),"B")
-        if v==1: B.add("Fringe",hd,"box",(hw*.9,.25,.2),"front",(0,.45,-.05),(0,0,0),"B")
-        if v==2: B.add("HairSide",hd,"box",(.2,.7,hw*.9),"right",(0,.1,0),(0,0,0),"B",mirror=True)
-        if v==3: B.add("Bun",hd,"gem",(.5,.5,.5),"back",(0,.5,.1),(0,0,0),"B")
+    cw=1.5*p.get("chest",1.0)*(1.12 if v==2 else .94 if v==1 else 1.0)
+    lw=p.get("limbs",1.0); hw=1.12*p.get("head",1.0)*(1.1 if v==0 else 1.0)
+    leg=1.35*lw*(1.1 if v==3 else 1.0)
+    hips=B.add("HumanoidRootPart",None,"box",(cw*.9,.5,.9),None,(0,0,0),(0,0,0),"P")
     for sx,suf in ((1,"R"),(-1,"L")):
-        a=B.add("Arm"+suf,torso,"box",(.6*p.get("arms",1.0),al,.6),"right" if sx>0 else "left",
-                (0,.75,0),(0,0,sx*6),"A")
-        f=B.add("Fore"+suf,a,"box",(.52,al*.95,.52),"bot")
-        B.add("Hand"+suf,f,"box",(.5,.45,.5),"bot",(0,0,0),(0,0,0),"D")
-        l=B.add("Leg"+suf,"HumanoidRootPart","box",(.72*lw,ll,.8),"bot",(sx*.5,-.1,0),(0,0,0),"A")
-        s2=B.add("Shin"+suf,l,"box",(.6*lw,ll,.66),"bot")
-        B.add("Foot"+suf,s2,"wedge",(.7,.4,1.15),"bot",(0,0,-.2),(0,0,0),"D")
-    B.add("Belt","HumanoidRootPart","box",(cw,.28,1.05),None,(0,.1,0),(0,0,0),"D")
+        th=B.add("Thigh"+suf,hips,"box",(.62*lw,leg,.7),"bot",(sx*.42,-.05,0),(0,0,0),"P")
+        shn=B.add("Shin"+suf,th,"box",(.5*lw,leg,.58),"bot")
+        B.add("Shoe"+suf,shn,"wedge",(.6,.35,1.05),"bot",(0,0,-.18),(0,0,0),"D")
+    torso=B.add("Chest",hips,"box",(cw,1.7,.95),"top",(0,.05,0),(0,0,0),"A",studs=True)
+    nk=B.add("Neck",torso,"box",(.42,.3,.42),"top",(0,0,0),(0,0,0),"K")
+    head=B.add("Head",nk,"box",(hw,1.12*hw,hw*.92),"top",(0,.05,0),(0,0,0),"K")
+    B.eyes(head,.1,-.6,.3*I["eyes"],.34*hw/1.12,sc="L")
+    B.add("Mouth",head,"box",(.42,.1,.1),"front",(0,-.35,-.02),(0,0,0),"D")
+    B.add("Ear",head,"box",(.12,.3,.25),"right",(0,0,0),(0,0,0),"K",mirror=True)
+    if "hair" not in I["neg"]:
+        B.add("HairTop",head,"box",(hw*1.02,.28,hw*.94),"top",(0,0,.04),(0,0,0),"H")
+        if v==0: B.add("HairBack",head,"box",(hw,.85,.22),"back",(0,-.15,.04),(0,0,0),"H")
+        if v==1: B.add("Fringe",head,"box",(hw*.85,.22,.18),"front",(0,.42,-.04),(0,0,0),"H")
+        if v==2: B.add("HairSide",head,"box",(.18,.6,hw*.9),"right",(0,.05,.04),(0,0,0),"H",mirror=True)
+        if v==3: B.add("Bun",head,"gem",(.45,.45,.45),"back",(0,.55,.08),(0,0,0),"H")
+        if "anime" in I["mods"]:
+            for i in range(4): B.add("HairSpike%d"%i,"HairTop","pyramid",(.22,.6,.22),"top",((i-1.5)*.3,0,-.1),(0,0,0),"H")
+    for sx,suf in ((1,"R"),(-1,"L")):
+        ua=B.add("Arm"+suf,torso,"box",(.52,1.15,.56),"right" if sx>0 else "left",(0,.55,0),(0,0,sx*4),"A")
+        fa=B.add("Fore"+suf,ua,"box",(.44,1.05,.46),"bot",(0,0,0),(0,0,0),"K")
+        B.add("Hand"+suf,fa,"box",(.42,.42,.45),"bot",(0,0,0),(0,0,0),"K")
+    B.add("Belt",hips,"box",(cw*.92,.22,.92),"top",(0,-.1,0),(0,0,0),"D")
     B.tag("humanoid")
 def b_octopus(B,I,r):
     n=8 if B.var!=1 else 6
@@ -452,16 +473,26 @@ def b_jelly(B,I,r):
                 ["C","L","C","L","C"],[8,10,12,14,16])
     B.tag("tentacles","frill","glow")
 def b_car(B,I,r):
-    p=I["prop"];v=B.var;ws=.85*p.get("wheels",1.0);lift=.25*p.get("lift",1.0)
-    low=.85 if v==1 else (1.15 if v==3 else 1.0)
-    L=4.6 if v!=3 else 4.3; W=2.1
+    p=I["prop"];body=I.get("carbody") or {0:"sedan",1:"sport",2:"buggy",3:"pickup"}[B.var]
+    ws=.85*p.get("wheels",1.0);lift=.25*p.get("lift",1.0)
+    low={"sport":.85,"buggy":1.0,"pickup":1.15,"van":1.2,"sedan":1.0}[body]
+    L={"sport":4.6,"sedan":4.5,"buggy":3.6,"pickup":4.8,"van":4.9}[body]; W=2.1
     ch=B.add("CoreRoot",None,"box",(W,.7*low,L),None,(0,.9*low+lift,0),(0,0,0),"A",studs=True)
-    cab=B.add("Cabin",ch,"box",(W*.82,.8*low,2.0),"top",(0,0,.5 if v==3 else .3),(0,0,0),"B")
-    B.add("WinF",cab,"wedge",(W*.78,.7*low,.15),"front",(0,0,0),(0,0,0),"D")
-    B.add("WinB",cab,"box",(W*.78,.6*low,.12),"back",(0,0,-.02),(0,0,0),"D")
-    B.add("Hood",ch,"wedge",(W*.9,.3,L*.32),"top",(0,-.12,-L*.3),(0,0,0),"A")
-    if v==1:
+    if body=="van":
+        cab=B.add("Cabin",ch,"box",(W*.92,1.5,L*.72),"top",(0,0,.35),(0,0,0),"A",studs=True)
+        B.add("WinF",cab,"box",(W*.8,.6,.12),"front",(0,.35,-.02),(0,0,0),"D")
+    else:
+        cl=2.0 if body!="buggy" else 1.4
+        cab=B.add("Cabin",ch,"box",(W*.82,.8*low,cl),"top",(0,0,.5 if body=="pickup" else .3),(0,0,0),"B")
+        B.add("WinF",cab,"wedge",(W*.78,.7*low,.15),"front",(0,0,0),(0,0,0),"D")
+        B.add("WinB",cab,"box",(W*.78,.6*low,.12),"back",(0,0,-.02),(0,0,0),"D")
+        B.add("Hood",ch,"wedge",(W*.9,.3,L*.3),"top",(0,-.12,-L*.3),(0,0,0),"A")
+    if body=="buggy":
+        for sx in (1,-1): B.add("Roll%d"%sx,ch,"box",(.15,.9,.15),"top",(sx*.8,.1,.6),(0,0,0),"D")
+        B.add("RollBar",ch,"box",(1.8,.15,.15),"top",(0,.95,.6),(0,0,0),"D")
+    if body=="sport":
         for sx in (1,-1): B.add("Stripe%d"%sx,ch,"box",(.28,.06,L*.75),"top",(sx*.45,.02,-.35),(0,0,0),"L")
+    if body=="pickup": B.add("Bed",ch,"box",(W*.95,.6,1.4),"top",(0,.15,1.5),(0,0,0),"A")
     for sx,suf in ((1,"R"),(-1,"L")):
         for zz,tag in ((L*.32,"F"),(-L*.32,"B")):
             w=B.add("Wheel%s%s"%(tag,suf),ch,"cylinder",(ws,.45,ws),None,(sx*(W/2+.05),-.25,zz),(0,0,90),"D")
@@ -471,10 +502,9 @@ def b_car(B,I,r):
         B.add("Skirt%s"%suf,ch,"box",(.15,.35,L*.7),"right" if sx>0 else "left",(0,-.15,0),(0,0,0),"D")
     B.add("BumpF",ch,"box",(W,.35,.3),"front",(0,-.15,0),(0,0,0),"D")
     B.add("BumpB",ch,"box",(W,.35,.3),"back",(0,-.15,0),(0,0,0),"D")
-    if v==1 or "sp_spoiler" in I["traits"]:
+    if body=="sport" or "sp_spoiler" in I["traits"]:
         B.add("Spoiler",ch,"box",(W*.9,.14,.55),"back",(0,.55,.15),(0,0,0),"D")
         for sx in (1,-1): B.add("SpoPost%d"%sx,ch,"box",(.14,.5,.14),"back",(sx*.7,.3,.15),(0,0,0),"D")
-    if v==3: B.add("Bed",ch,"box",(W*.95,.6,1.4),"top",(0,.15,1.5),(0,0,0),"A")
     B.tag("wheels")
 def b_bike(B,I,r):
     fr=B.add("CoreRoot",None,"box",(.5,.7,2.2),None,(0,1.2,0),(0,0,0),"A")
@@ -525,8 +555,6 @@ BUILDERS={"humanoid":b_humanoid,"octopus":b_octopus,"serpent":b_serpent,"fish":b
  "bike":b_bike,"boat":b_boat,"plane":b_plane,"heli":b_heli,"tank":b_tank}
 BUDGETS={"humanoid":80,"octopus":100,"serpent":70,"fish":60,"bird":70,"crab":80,"spider":80,"golem":70,
  "turtle":60,"jelly":110,"car":60,"bike":30,"boat":35,"plane":35,"heli":40,"tank":35}
-
-# ================= 7. CRITIQUE v6 (+overlap penalty) =================
 def critique(spec,I):
     rep={};tot=0.0;ws=0.0
     def add(k,v,w): rep[k]=int(round(v*100));return v*w
@@ -539,7 +567,7 @@ def critique(spec,I):
         while par and par in idx: y+=idx[par]["po"][1];par=idx[par]["p"]
         return y
     my=min(ymin(p["n"]) for p in spec["parts"])
-    tot+=add("grounded",1.0 if (abs(my)<.4 if not I["float"] else my>1.0) else .3,.08);ws+=.08
+    tot+=add("grounded",1.0 if (abs(my)<.45 if not I["float"] else my>1.0) else .3,.08);ws+=.08
     studs=sum(1 for p in spec["parts"] if p["n"].startswith("Stud"))
     tot+=add("style_studs",1.0 if studs>=6 else .4,.10);ws+=.10
     byp={}
@@ -550,8 +578,7 @@ def critique(spec,I):
     for par,lst in byp.items():
         for i in range(len(lst)):
             for j in range(i+1,len(lst)):
-                a,b=lst[i],lst[j];da=rot_dims(a["sz"],a["ro"]);db=rot_dims(b["sz"],b["ro"])
-                vol=1.0
+                a,b=lst[i],lst[j];da=rot_dims(a["sz"],a["ro"]);db=rot_dims(b["sz"],b["ro"]);vol=1.0
                 for ax in range(3):
                     inter=min(a["po"][ax]+da[ax]/2,b["po"][ax]+db[ax]/2)-max(a["po"][ax]-da[ax]/2,b["po"][ax]-db[ax]/2)
                     if inter<=0: vol=0;break
@@ -559,7 +586,7 @@ def critique(spec,I):
                 if vol>0 and vol>.55*min(da[0]*da[1]*da[2],db[0]*db[1]*db[2]): bad+=1
     tot+=add("overlap",max(0,1-bad*.12),.10);ws+=.10
     n=len(spec["parts"]);bud=BUDGETS.get(spec["archetype"],80)
-    tot+=add("purpose",1.0 if n<=bud*1.6 else .5,.08);ws+=.08
+    tot+=add("purpose",1.0 if n<=bud*1.7 else .5,.08);ws+=.08
     if I["colors"]:
         ds=[max(0,1-min(hue_dist(ih,hex_hsv(h)[0]) for h in list(spec["palette"].values())[:6])/90.0) for ih,_,_ in I["colors"]]
         tot+=add("color_match",sum(ds)/len(ds),.14);ws+=.14
@@ -570,8 +597,6 @@ def critique(spec,I):
     tot+=add("silhouette",clamp((max(sizes)-min(sizes))/max(.001,max(sizes))/.8,0,1),.07);ws+=.07
     tot+=add("sharp_match",max(0,1-abs(I["sharp"]-spec["sharpness"])/2.0),.07);ws+=.07
     return int(round(100*tot/ws)),rep
-
-# ================= 8. MEMORY + SEARCH (variant-diverse) =================
 def style_vector(spec):
     hs=[hex_hsv(h) for h in list(spec["palette"].values())[:6]]
     return {"sharp":spec["sharpness"],"scale":spec["scale"],"parts":len(spec["parts"]),
@@ -605,7 +630,43 @@ def _build(I,arch,seed,feat,variant):
       "archetype":arch,"variant":variant,"seed":seed,"sharpness":round(B.sharp,2),"scale":round(B.scale,2),
       "palette":pal,"tags":sorted(B.present),"root":B.root,"parts":B.parts,"mirrored":B.mirrored,
       "counts":dict(B.counts),"traits_present":sorted(B.present),
-      "meta":{"scheme":"v6","mods":I["mods"],"prompt":I.get("_prompt","")}}
+      "meta":{"scheme":"v7","mods":I["mods"],"prompt":I.get("_prompt","")}}
+def build_one(prompt,seed=7,var=0,feat=None):
+    I=parse_intent(prompt);I["_prompt"]=prompt
+    return _build(I,I["root"],seed,feat or {},var),I
+def structural_checks(spec,I):
+    out=[];P=spec["parts"];names=[p["n"] for p in P];idx={p["n"]:p for p in P}
+    out.append(("root_match",spec["archetype"]==I["root"]))
+    out.append(("names_unique",len(names)==len(set(names))))
+    out.append(("parents_exist",all(p["p"] in idx for p in P if p["p"])))
+    out.append(("finite",all(isinstance(v,(int,float)) and v==v for p in P for v in p["po"]+p["sz"]+p["ro"])))
+    def ymin(n):
+        p=idx[n];y=p["po"][1]-rot_dims(p["sz"],p["ro"])[1]/2;par=p["p"]
+        while par and par in idx: y+=idx[par]["po"][1];par=idx[par]["p"]
+        return y
+    my=min(ymin(n) for n in names)
+    out.append(("grounded",abs(my)<.45 if not I["float"] else my>1.0))
+    out.append(("budget",len(P)<=BUDGETS.get(spec["archetype"],90)*1.7))
+    out.append(("palette_hex",all(re.fullmatch(r"#[0-9a-f]{6}",c) for c in spec["palette"].values())))
+    mok=all((a in idx and b in idx) for a,b in spec["mirrored"])
+    out.append(("mirror_ok",mok))
+    tags=set(spec["traits_present"])
+    out.append(("traits_applied",all(t in tags for t in I["traits"] if t in ADDONS)))
+    out.append(("neg_absent",not any(t in tags for t in I["neg"])))
+    if spec["archetype"]=="humanoid":
+        need=["Head","Chest","Neck","ArmR","ArmL","ForeR","ForeL","HandR","HandL",
+              "ThighR","ThighL","ShoeR","ShoeL","EyeR","PupilR","Mouth"]
+        out.append(("human_parts",all(n in idx for n in need)))
+        hd=idx.get("Head");hnd=idx.get("HandR")
+        out.append(("skin_role",bool(hd and hd["c"]=="K" and hnd and hnd["c"]=="K")))
+    if spec["archetype"]=="car":
+        wheels=[p for p in P if p["n"].startswith("Wheel")]
+        hubs=[p for p in P if p["n"].startswith("Hub")]
+        xs={1 if p["po"][0]>0 else -1 for p in wheels}; zs={1 if p["po"][2]>0 else -1 for p in wheels}
+        out.append(("four_wheels",len(wheels)==4 and len(hubs)==4))
+        out.append(("corners",len(xs)==2 and len(zs)==2))
+        out.append(("windshield",any(p["n"]=="WinF" for p in P)))
+    return out
 def generate(body,mem):
     t0=time.time();prompt=body.get("prompt","human");it=int(body.get("iteration",0))
     nonce=body.get("nonce","x");reasons=body.get("reasons",[]);feat=body.get("features") or {}
@@ -621,7 +682,7 @@ def generate(body,mem):
     for k in range(K):
         if time.time()-t0>BUDGET: break
         seed=zlib.crc32(("%s|%d|%s|%d"%(prompt,it,nonce,k)).encode())
-        var=(it+k)%4                      # <-- every candidate = different body-plan
+        var=(it+k)%4
         I2=dict(I);I2["sharp"]=clamp(I["sharp"]+random.Random(seed).uniform(-.15,.15),.2,2.6)
         try: spec=_build(I2,I["root"],seed,feat,var)
         except Exception: continue
