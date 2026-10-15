@@ -73,7 +73,7 @@ def generate_model_blueprint(prompt, seed=7):
         for fz, zt in ((-0.78, "F"), (0.78, "B")):
             P(f"LegR{zt}", "Torso", "shape", "cylinder", (0.34, 1.05, 0.34), "bot", u=0.68, v=zt=="F" and -0.7 or 0.7, inset=0.08, c=fur, joint=True)
             P(f"LegL{zt}", "Torso", "shape", "cylinder", (0.34, 1.05, 0.34), "bot", u=-0.68, v=zt=="F" and -0.7 or 0.7, inset=0.08, c=fur, joint=True)
-        archetype, riggable = "animal", True
+        riggable = True
 
     # Building / House / Castle / Skyscraper
     elif any(w in p_low for w in ("building", "house", "shop", "tower", "skyscraper", "castle", "pagoda")):
@@ -85,7 +85,7 @@ def generate_model_blueprint(prompt, seed=7):
         P("DoorFrame", "MainWalls", "detail", "box", (1.85, 2.2, 0.22), "front", u=0, v=-0.75, inset=0.04, c="#1e293b", mat="Metal")
         P("Win1", "MainWalls", "detail", "box", (1.18, 1.35, 0.18), "front", u=-1.5, v=0.2, inset=0.04, c="#7dd3fc", mat="Glass", tr=0.35)
         P("Win2", "MainWalls", "detail", "box", (1.18, 1.35, 0.18), "front", u=1.5, v=0.2, inset=0.04, c="#7dd3fc", mat="Glass", tr=0.35)
-        archetype, riggable = "building", False
+        riggable = False
 
     # Default Humanoid / Character Fallback
     else:
@@ -98,7 +98,7 @@ def generate_model_blueprint(prompt, seed=7):
         P("ArmL", "Torso", "shape", "box", (0.58, 1.15, 0.6), "left", u=0, v=0.22, inset=0.02, c=suit_c, joint=True)
         P("ThighR", "HumanoidRootPart", "shape", "box", (0.68, 1.35, 0.72), "bot", u=0.52, v=0, inset=0.02, c="#1e293b", joint=True)
         P("ThighL", "HumanoidRootPart", "shape", "box", (0.68, 1.35, 0.72), "bot", u=-0.52, v=0, inset=0.02, c="#1e293b", joint=True)
-        archetype, riggable = "humanoid", True
+        riggable = True
 
     # Compile parts with surface sockets
     compiled = []
@@ -155,13 +155,11 @@ def generate_model_blueprint(prompt, seed=7):
     spec = {
         "id": f"rbx_{int(time.time()*1000)%100000}_{seed%97}",
         "name": f"{prompt.title()[:15]}_{seed%997}",
-        "archetype": archetype, "variant": 0, "seed": seed,
         "root": root_name, "parts": compiled,
         "pipeline_logs": [{"stage": "qa_gate", "msg": f"Successfully compiled {len(compiled)} parts with surface sockets."}],
         "meta": {"prompt": prompt, "riggable": riggable}
     }
     
-    # Compute bounds and exporters
     xs, ys, zs = [], [], []
     for p in compiled:
         wx, wy, wz = p["po"]
@@ -171,7 +169,6 @@ def generate_model_blueprint(prompt, seed=7):
         zs.extend([wz - sz/2, wz + sz/2])
     spec["bounds"] = [round(max(xs)-min(xs), 1), round(max(ys)-min(ys), 1), round(max(zs)-min(zs), 1)]
 
-    # Luau Export
     lines = [
         f"-- Roblox Cloud Modeler | {spec['name']} | Parts: {len(compiled)}",
         "local model = Instance.new('Model')",
@@ -199,6 +196,7 @@ def generate_model_blueprint(prompt, seed=7):
     ]
     for p in compiled:
         hx = p.get("c", "#cccccc")
+        if not str(hx).startswith("#"): hx = "#cccccc"
         lines.append(f"mk({json.dumps(p['n'])}, {json.dumps(p['p'])}, {json.dumps(p['s'])}, {{{p['sz'][0]},{p['sz'][1]},{p['sz'][2]}}}, {{{p['po'][0]},{p['po'][1]},{p['po'][2]}}}, {{{p['ro'][0]},{p['ro'][1]},{p['ro'][2]}}}, {json.dumps(hx)}, {json.dumps(p.get('mat', 'SmoothPlastic'))}, {p.get('tr', 0.0)}, {'true' if (riggable and p.get('joint')) else 'false'})")
     if root_name:
         lines.append(f"if parts[{json.dumps(root_name)}] then model.PrimaryPart = parts[{json.dumps(root_name)}] end")
@@ -362,7 +360,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/generate"):
             qs = parse_qs(parsed.query)
             prompt = (qs.get("prompt") or ["cat"])[0]
-            spec = generate_model_blueprint(prompt, seed=7)
+            seed = int(time.time() * 1000) % 99999
+            spec = generate_model_blueprint(prompt, seed=seed)
             return self._send(json.dumps(spec))
         return self._send('{"error":"not found"}', status=404)
 
@@ -375,7 +374,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(json.dumps(spec))
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))  # Render default fallback
+    port = int(os.environ.get("PORT", 10000))
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     print(f"Server started successfully on port {port}")
     srv.serve_forever()
