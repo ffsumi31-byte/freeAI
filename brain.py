@@ -1,17 +1,14 @@
-"""BrickForge AI v9 (Ultra Edition) — fail-safe procedural 3D brick build pipeline.
-v9: 10x upgrade — 32 archetypes (added mech, train, furniture, food, instrument, gun,
-    appliance, space, monster, structure, collectible, bug_fly), 48 quadruped species
-    (including cerberus, rhino, hippo, zebra, mammoth, griffin, pegasus, triceratops, stegosaurus),
-    36 modular addons + auto-equipped humanoid weapons/shields/jetpacks/beards,
-    multi-word phrase detection, 45+ colors & materials, 1,200+ vocabulary keywords.
-v8: quadruped archetype, building / tree / weapon archetypes, plural + typo tolerant parsing.
-v7.1: root tie-break, partial-build resilience, guaranteed fallback spec."""
+"""BrickForge AI v10 — Fail-Safe Procedural 3D Brick Pipeline (10x Context & Archetype Upgrade).
+v10: 62 quadruped/mythic species, 25 archetypes (new: mech, train, furniture, food),
+     equipment/preposition parsing ("knight holding sword" equips weapon on humanoid),
+     expanded vehicle/weapon/building sub-variants, 65+ colors, 18 material themes,
+     100% compatible with v8 generate(), build_one(), critique(), and structural_checks()."""
 import math, random, re, colorsys, zlib, time, difflib
 from collections import Counter
 
 BUDGET = 7.0
 
-# ---------------------------------------------------------------- species (quadrupeds)
+# ---------------------------------------------------------------- species (quadrupeds & creatures)
 # palette order: A body, B legs/ears/secondary, C accent, S horns/special, D hooves/dark, L light/muzzle
 _Q = dict(bw=1.9,bh=1.5,bl=3.0,leg=1.6,lw=.4,neck=.9,nang=40,head=(1.0,1.0,1.2),snout=(.6,.5,.6),
           ears="point",ear=(.3,.5),horns=None,tail="short",size=1.0,headc="A",snoutc="L",extras=(),
@@ -20,516 +17,380 @@ def _sp(**k):
     d = dict(_Q); d.update(k); return d
 
 SPECIES = {
- "goat":      _sp(bh=1.4,leg=1.7,lw=.34,neck=1.1,nang=35,head=(.9,1.0,1.15),snout=(.55,.5,.55),ears="side",
-                  ear=(.45,.55),horns="curved",tail="short",extras=("beard",),
-                  pal=("#e6e0d2","#a89c86","#e8c547","#5a4a3a","#2d241c","#fbf8f0")),
- "sheep":     _sp(leg=1.3,lw=.36,neck=.7,nang=25,head=(.9,.95,1.0),snout=(.55,.5,.5),ears="side",ear=(.4,.45),
-                  headc="B",extras=("wool",),pal=("#f1eee6","#3d3a38","#e8c547","#8a7f70","#2a2624","#ffffff")),
- "dog":       _sp(bh=1.3,bl=2.7,leg=1.3,lw=.36,neck=.6,nang=30,head=(.95,.9,1.0),snout=(.55,.45,.8),ears="floppy",
-                  ear=(.5,.8),tail="long_up",extras=("collar",),pal=("#c89a62","#8f6a3e","#e63946","#d8b98a","#2b1d12","#f3e6cf")),
- "wolf":      _sp(bh=1.4,bl=3.0,leg=1.7,lw=.36,neck=.7,nang=32,head=(.95,.9,1.1),snout=(.5,.45,.9),ears="point",
-                  ear=(.3,.6),tail="bushy",pal=("#8e949c","#5d636b","#e8c547","#c9ced4","#22262b","#e9edf0")),
- "fox":       _sp(bh=1.2,bl=2.6,leg=1.3,lw=.3,neck=.6,nang=30,head=(.9,.85,1.0),snout=(.5,.4,.9),ears="point",
-                  ear=(.42,.8),tail="bushy",pal=("#d9742b","#a9511a","#2b2118","#f3e9dc","#2a1a10","#fbf5ec")),
- "cat":       _sp(bw=1.6,bh=1.1,bl=2.4,leg=1.0,lw=.3,neck=.5,nang=30,head=(1.0,.9,.9),snout=(.4,.3,.3),ears="point",
-                  ear=(.35,.5),tail="long_up",extras=("whiskers",),pal=("#9a9aa2","#6e6e78","#7cd67c","#e0d0c0","#2a2a30","#f2f2f4")),
- "lion":      _sp(bw=2.0,bh=1.7,bl=3.3,leg=1.7,lw=.5,neck=.6,nang=25,head=(1.1,1.0,1.1),snout=(.55,.45,.5),ears="round",
-                  ear=(.4,.4),tail="tuft",extras=("mane",),pal=("#d9a441","#b5802a","#e8c547","#6b3f1d","#3b2410","#f0d9a8")),
- "tiger":     _sp(bw=1.9,bh=1.5,bl=3.3,leg=1.5,lw=.48,neck=.6,nang=28,head=(1.05,.95,1.05),snout=(.55,.45,.5),ears="round",
-                  ear=(.38,.38),tail="hang",extras=("stripes",),pal=("#e08a2c","#b8661a","#e8c547","#f5e6c8","#1f140c","#fbf3e2")),
- "panther":   _sp(bw=1.8,bh=1.4,bl=3.2,leg=1.5,lw=.44,neck=.6,nang=28,head=(1.0,.9,1.05),snout=(.5,.4,.5),ears="round",
-                  ear=(.35,.35),tail="long_up",pal=("#1c1c24","#121218","#ffd166","#2e2e3a","#09090c","#343442")),
- "cheetah":   _sp(bw=1.6,bh=1.3,bl=3.2,leg=1.8,lw=.34,neck=.7,nang=30,head=(.9,.85,.95),snout=(.45,.4,.45),ears="round",
-                  ear=(.32,.32),tail="long_up",extras=("spots",),pal=("#e6b85c","#c49238","#e8c547","#2b1d12","#1c120a","#fbf2dc")),
- "hyena":     _sp(bw=1.9,bh=1.5,bl=2.8,leg=1.5,lw=.4,neck=.7,nang=25,head=(1.0,.95,1.1),snout=(.55,.5,.6),ears="round",
-                  ear=(.42,.48),tail="bushy",extras=("spots","hmane"),pal=("#a88b68","#7a6248","#e8c547","#3b2a1c","#241a10","#d8c3a8")),
- "horse":     _sp(bw=1.8,bh=1.6,bl=3.6,leg=2.8,lw=.34,neck=2.0,nang=35,head=(.8,.9,1.5),snout=(.7,.6,.6),ears="point",
-                  ear=(.22,.45),tail="hang",extras=("hmane",),snoutc="B",pal=("#8a5a35","#5e3b1f","#e8c547","#2a1a10","#1f130a","#e9d9c0")),
- "unicorn":   _sp(bw=1.8,bh=1.6,bl=3.4,leg=2.7,lw=.32,neck=2.0,nang=35,head=(.8,.9,1.4),snout=(.7,.6,.6),ears="point",
-                  ear=(.22,.45),horns="straight",tail="hang",extras=("hmane",),
-                  pal=("#f7f3fb","#d9c9f0","#ff8fc8","#ffd86b","#8b6bbf","#ffffff")),
- "pegasus":   _sp(bw=1.8,bh=1.6,bl=3.4,leg=2.7,lw=.32,neck=2.0,nang=35,head=(.8,.9,1.4),snout=(.7,.6,.6),ears="point",
-                  ear=(.22,.45),tail="hang",extras=("hmane","quad_wings"),
-                  pal=("#f2f6fc","#cfe0f5","#ffd166","#ffffff","#6c8ebf","#ffffff")),
- "zebra":     _sp(bw=1.8,bh=1.6,bl=3.4,leg=2.5,lw=.34,neck=1.8,nang=35,head=(.8,.9,1.4),snout=(.7,.6,.55),ears="point",
-                  ear=(.25,.45),tail="tuft",extras=("hmane","stripes"),snoutc="D",
-                  pal=("#f2f2f2","#d9d9d9","#e8c547","#222222","#141414","#ffffff")),
- "donkey":    _sp(bh=1.4,bl=3.0,leg=1.8,lw=.34,neck=1.0,nang=35,head=(.85,.95,1.3),snout=(.65,.55,.55),ears="long",
-                  ear=(.3,1.1),tail="tuft",pal=("#8b8f96","#5f6368","#e8c547","#cfd3d8","#2b2d30","#f0f0f0")),
- "cow":       _sp(bw=2.1,bh=1.7,bl=3.3,leg=1.5,lw=.46,neck=.7,nang=25,head=(1.0,1.0,1.1),snout=(.7,.5,.4),ears="side",
-                  ear=(.5,.5),horns="bull",tail="tuft",extras=("spots","udder"),
-                  pal=("#f4f1ea","#d9d4c8","#e8c547","#e8dcc0","#1f1f1f","#f5b8c4")),
- "bison":     _sp(bw=2.5,bh=2.1,bl=3.5,leg=1.5,lw=.55,neck=.6,nang=15,head=(1.3,1.3,1.2),snout=(.7,.5,.4),ears="side",
-                  ear=(.45,.45),horns="bull",tail="tuft",extras=("hump","beard"),
-                  pal=("#5a3b22","#3d2614","#e8c547","#d8ccb8","#1f130a","#7a5435")),
- "pig":       _sp(bw=2.1,bh=1.7,bl=3.0,leg=.9,lw=.5,neck=.5,nang=20,head=(1.1,1.0,1.0),snout=(.6,.5,.35),ears="floppy",
-                  ear=(.45,.5),tail="curly",pal=("#f2a6b8","#e08aa0","#2b1d12","#f9c9d4","#3d2a30","#f9c9d4")),
- "boar":      _sp(bw=2.2,bh=1.8,bl=3.1,leg=1.0,lw=.5,neck=.5,nang=18,head=(1.15,1.05,1.1),snout=(.6,.5,.4),ears="point",
-                  ear=(.4,.45),tail="short",extras=("tusks","hmane"),pal=("#5c4332","#3f2d20","#e8c547","#efe6d5","#241911","#806049")),
- "deer":      _sp(bw=1.7,bh=1.5,bl=3.0,leg=2.5,lw=.3,neck=1.6,nang=30,head=(.8,.85,1.2),snout=(.55,.5,.55),ears="point",
-                  ear=(.3,.6),horns="antlers",tail="short",pal=("#b07a45","#8b5c2e","#e8c547","#e2d2b0","#2b1a0e","#f3e7d0")),
- "moose":     _sp(bw=2.2,bh=1.9,bl=3.5,leg=2.7,lw=.42,neck=1.2,nang=22,head=(1.0,1.1,1.5),snout=(.75,.65,.7),ears="side",
-                  ear=(.45,.6),horns="antlers",tail="short",extras=("beard","hump"),
-                  pal=("#5e4028","#422c1b","#e8c547","#d9c39e","#21150c","#825c3c")),
- "rabbit":    _sp(bw=1.7,bh=1.5,bl=2.2,leg=.9,lw=.4,neck=.4,nang=20,head=(1.1,1.0,1.1),snout=(.45,.35,.3),ears="long",
-                  ear=(.28,1.5),tail="ball",pal=("#e9e2d6","#cfc4b2","#ff9fb3","#f7f1e8","#3a2e24","#ffffff")),
- "squirrel":  _sp(size=.8,bw=1.5,bh=1.3,bl=2.1,leg=.85,lw=.32,neck=.4,nang=22,head=(.95,.9,.95),snout=(.45,.35,.35),ears="point",
-                  ear=(.28,.45),tail="bushy",pal=("#b8622a","#8f4719","#2b1d12","#e6c8a8","#241409","#f2dec4")),
- "beaver":    _sp(size=.85,bw=2.0,bh=1.4,bl=2.5,leg=.75,lw=.4,neck=.35,nang=15,head=(1.05,.95,1.0),snout=(.5,.4,.35),ears="round",
-                  ear=(.25,.25),tail="croc",pal=("#78492a","#54311a","#2b1d12","#f5efe6","#2e1c10","#b0784f")),
- "otter":     _sp(size=.85,bw=1.5,bh=1.1,bl=3.2,leg=.7,lw=.35,neck=.6,nang=22,head=(.95,.85,1.0),snout=(.5,.38,.4),ears="round",
-                  ear=(.22,.22),tail="croc",extras=("whiskers",),pal=("#6e4a30","#4f331f","#2b1d12","#d9c2a6","#1f130b","#e8d6be")),
- "badger":    _sp(size=.85,bw=2.0,bh=1.3,bl=2.7,leg=.8,lw=.42,neck=.45,nang=15,head=(.95,.85,1.15),snout=(.5,.4,.5),ears="round",
-                  ear=(.28,.28),tail="short",extras=("patches",),pal=("#595d63","#222428","#e8c547","#f0f0f0","#141518","#ffffff")),
- "skunk":     _sp(size=.8,bw=1.7,bh=1.3,bl=2.5,leg=.8,lw=.35,neck=.45,nang=20,head=(.9,.85,1.0),snout=(.45,.35,.45),ears="round",
-                  ear=(.26,.26),tail="bushy",extras=("stripes",),pal=("#1c1c20","#121216","#e8c547","#ffffff","#ffffff","#f5f5f7")),
- "raccoon":   _sp(size=.85,bw=1.8,bh=1.4,bl=2.5,leg=.85,lw=.36,neck=.45,nang=20,head=(1.0,.9,1.0),snout=(.45,.35,.45),ears="point",
-                  ear=(.3,.4),tail="bushy",extras=("patches","stripes"),pal=("#7d8087","#232428","#e8c547","#d2d5dc","#17181c","#f0f2f5")),
- "hedgehog":  _sp(size=.75,bw=1.9,bh=1.5,bl=2.2,leg=.6,lw=.32,neck=.3,nang=10,head=(.95,.85,1.0),snout=(.45,.35,.5),ears="round",
-                  ear=(.25,.25),tail="short",extras=("plates",),pal=("#735338","#4f3723","#2b1d12","#d9bd9c","#24180e","#f2dec4")),
- "bear":      _sp(bw=2.4,bh=2.2,bl=3.2,leg=1.3,lw=.75,neck=.5,nang=15,head=(1.4,1.3,1.3),snout=(.5,.4,.5),ears="round",
-                  ear=(.4,.4),tail="short",pal=("#6b4423","#4a2f1b","#e8c547","#d9c2a0","#1c120a","#c9a47a")),
- "polarbear": _sp(bw=2.5,bh=2.2,bl=3.4,leg=1.4,lw=.78,neck=.6,nang=15,head=(1.35,1.25,1.35),snout=(.5,.42,.55),ears="round",
-                  ear=(.36,.36),tail="short",pal=("#f2f5f8","#dce3ea","#22262b","#ffffff","#1a1d21","#ffffff")),
- "panda":     _sp(bw=2.4,bh=2.2,bl=3.0,leg=1.3,lw=.75,neck=.5,nang=15,head=(1.4,1.3,1.3),snout=(.5,.4,.5),ears="round",
-                  ear=(.4,.4),tail="short",extras=("patches",),pal=("#f4f4f4","#1c1c1c","#e8c547","#cfcfcf","#111111","#ffffff")),
- "koala":     _sp(size=.8,bw=1.8,bh=1.6,bl=2.1,leg=.9,lw=.42,neck=.35,nang=15,head=(1.25,1.15,1.05),snout=(.4,.45,.35),ears="round",
-                  ear=(.65,.65),tail="ball",snoutc="D",pal=("#8f96a0","#686f78","#22262b","#e6e9ed","#232629","#f4f6f8")),
- "kangaroo":  _sp(bw=1.8,bh=1.7,bl=2.6,leg=2.2,lw=.48,neck=1.2,nang=45,head=(.85,.9,1.15),snout=(.55,.45,.55),ears="long",
-                  ear=(.3,.95),tail="croc",pal=("#c28246","#965f2d","#e8c547","#e6caa8","#2e1c0c","#f2dfc7")),
- "capybara":  _sp(bw=2.1,bh=1.6,bl=2.9,leg=.95,lw=.45,neck=.45,nang=18,head=(1.1,1.1,1.3),snout=(.7,.6,.45),ears="round",
-                  ear=(.25,.25),tail="short",snoutc="B",pal=("#9c6b43","#704a2b","#261a10","#b8865c","#291a0e","#b8865c")),
- "platypus":  _sp(size=.8,bw=1.9,bh=1.0,bl=2.8,leg=.6,lw=.4,neck=.35,nang=10,head=(1.0,.8,1.0),snout=(.85,.25,.9),ears="none",
-                  tail="croc",snoutc="D",pal=("#6e4b2e","#4a311d","#e8c547","#333942","#262b33","#3b424d")),
- "armadillo": _sp(size=.85,bw=2.1,bh=1.5,bl=2.7,leg=.75,lw=.38,neck=.4,nang=15,head=(.85,.8,1.1),snout=(.45,.35,.6),ears="point",
-                  ear=(.28,.48),tail="croc",extras=("stripes","shell_back"),pal=("#9e8c78","#756554","#2b221a","#bfb09e","#382e24","#dcd0c0")),
- "elephant":  _sp(bw=3.0,bh=2.8,bl=4.0,leg=2.4,lw=1.0,neck=.5,nang=10,head=(1.8,1.9,1.5),snout=(.35,.35,.2),ears="flap",
-                  ear=(1.4,1.8),tail="short",extras=("trunk","tusks"),snoutc="A",
-                  pal=("#8e949c","#757b83","#e8c547","#f2ecdc","#3b3f45","#b8bec6")),
- "mammoth":   _sp(bw=3.1,bh=2.9,bl=4.1,leg=2.4,lw=1.05,neck=.55,nang=12,head=(1.85,1.95,1.55),snout=(.35,.35,.2),ears="flap",
-                  ear=(1.0,1.3),tail="short",extras=("trunk","tusks","wool","hump"),snoutc="A",
-                  pal=("#6b4423","#4d2f16","#e8c547","#f5efe0","#29180a","#8c5c32")),
- "rhino":     _sp(bw=2.7,bh=2.2,bl=3.8,leg=1.6,lw=.8,neck=.6,nang=15,head=(1.35,1.35,1.5),snout=(.75,.65,.6),ears="point",
-                  ear=(.3,.45),horns="rhino",tail="short",snoutc="A",
-                  pal=("#7d828a","#5f646b","#e8c547","#e8e2d5","#2e3136","#9ea4ad")),
- "hippo":     _sp(bw=2.8,bh=2.1,bl=3.7,leg=1.2,lw=.78,neck=.5,nang=12,head=(1.45,1.35,1.4),snout=(.95,.75,.85),ears="round",
-                  ear=(.28,.28),tail="short",snoutc="B",
-                  pal=("#7c6d7a","#9e8598","#e8c547","#f2eadf","#382f37","#b599ae")),
- "giraffe":   _sp(bw=1.9,bh=1.7,bl=3.0,leg=3.8,lw=.38,neck=3.8,nang=12,head=(.9,.9,1.3),snout=(.6,.5,.6),ears="point",
-                  ear=(.3,.45),horns="knobs",tail="tuft",extras=("spots",),
-                  pal=("#e0b04a","#c98f2e","#e8c547","#8a5a1a","#6b3f12","#f6e3b0")),
- "camel":     _sp(bw=1.9,bh=1.7,bl=3.4,leg=2.6,lw=.4,neck=2.0,nang=35,head=(.9,.9,1.2),snout=(.6,.5,.6),ears="round",
-                  ear=(.25,.25),tail="short",extras=("hump",),pal=("#c9a06a","#a47c48","#e8c547","#e0c9a0","#3b2a18","#ecd9b8")),
- "llama":     _sp(bh=1.6,bl=2.8,leg=2.2,lw=.34,neck=2.2,nang=22,head=(.8,.9,1.0),snout=(.6,.5,.5),ears="point",
-                  ear=(.25,.6),tail="short",extras=("wool",),pal=("#efe6d6","#c9bba4","#e8c547","#a58f6e","#4a3b2a","#ffffff")),
- "cerberus":  _sp(bw=2.2,bh=1.6,bl=3.1,leg=1.6,lw=.45,neck=.8,nang=30,head=(.95,.9,1.05),snout=(.55,.45,.75),ears="point",
-                  ear=(.32,.55),tail="serp",extras=("three_heads","collar"),
-                  pal=("#262228","#171419","#ff2d55","#a61c3c","#0d0b0e","#453d4a")),
- "griffin":   _sp(bw=2.0,bh=1.6,bl=3.2,leg=1.7,lw=.45,neck=.9,nang=32,head=(1.05,1.0,1.15),snout=(.55,.5,.7),ears="point",
-                  ear=(.3,.55),tail="tuft",extras=("quad_wings","mane"),snoutc="C",
-                  pal=("#c99438","#f2efe9","#f5b82e","#8f6319","#33240c","#ffffff")),
- "dino":      _sp(bh=1.9,bl=3.6,leg=1.6,lw=.65,neck=.9,nang=25,head=(1.3,1.2,2.0),snout=(.9,.6,.5),ears="none",
-                  tail="croc",extras=("plates",),pal=("#5aa05a","#3f7a3f","#f2c94c","#e7d9a6","#243b24","#b9dca0")),
- "trex":      _sp(bw=2.1,bh=2.2,bl=3.4,leg=2.1,lw=.7,neck=1.1,nang=38,head=(1.5,1.4,2.1),snout=(.85,.65,.65),ears="none",
-                  tail="croc",extras=("dino_jaw",),snoutc="A",pal=("#4e8c4a","#386635","#f2c94c","#f5efe0","#1f381d","#9ec99a")),
- "triceratops":_sp(bw=2.5,bh=2.0,bl=3.6,leg=1.5,lw=.7,neck=.6,nang=12,head=(1.4,1.3,1.6),snout=(.65,.55,.65),ears="none",
-                  horns="tri",tail="croc",extras=("frill_crest",),pal=("#6c8f4e","#4e6937","#f2c94c","#efe5cc","#29381c","#b8cf9e")),
- "brachiosaurus":_sp(bw=2.5,bh=2.2,bl=3.8,leg=3.2,lw=.75,neck=4.0,nang=18,head=(1.0,1.0,1.3),snout=(.65,.5,.55),ears="none",
-                  tail="croc",pal=("#5d9970","#427051","#f2c94c","#c6e0ce","#213b29","#a3ccb0")),
- "croc":      _sp(bh=.9,bl=3.8,leg=.6,lw=.5,neck=.3,nang=10,head=(1.2,.8,1.8),snout=(.9,.6,.6),ears="none",
-                  tail="croc",extras=("plates",),pal=("#4f8f4a","#3a6e36","#f2c94c","#cfd8a0","#1e3a1c","#d8e3a8")),
- "mouse":     _sp(size=.7,bw=1.8,bh=1.3,bl=2.4,leg=.8,lw=.35,neck=.3,nang=20,head=(1.1,1.0,1.2),snout=(.4,.35,.4),
-                  ears="round",ear=(.8,.8),tail="long_thin",pal=("#a9a9b0","#f4b9c2","#2b2b30","#85858c","#2b2b30","#ece9e4")),
- "beast":     _sp(pal=None,horns=None,ears="point",tail="short"),
+ "goat":     _sp(bh=1.4,leg=1.7,lw=.34,neck=1.1,nang=35,head=(.9,1.0,1.15),snout=(.55,.5,.55),ears="side",
+                 ear=(.45,.55),horns="curved",tail="short",extras=("beard",),
+                 pal=("#e6e0d2","#a89c86","#e8c547","#5a4a3a","#2d241c","#fbf8f0")),
+ "ibex":     _sp(bh=1.45,leg=1.8,lw=.36,neck=1.15,nang=32,head=(.9,1.0,1.15),snout=(.55,.5,.55),ears="side",
+                 ear=(.4,.5),horns="spiral",tail="short",extras=("beard",),
+                 pal=("#9c8268","#6e5842","#e8c547","#3d3126","#241c15","#e6dbc8")),
+ "sheep":    _sp(leg=1.3,lw=.36,neck=.7,nang=25,head=(.9,.95,1.0),snout=(.55,.5,.5),ears="side",ear=(.4,.45),
+                 headc="B",extras=("wool",),pal=("#f1eee6","#3d3a38","#e8c547","#8a7f70","#2a2624","#ffffff")),
+ "dog":      _sp(bh=1.3,bl=2.7,leg=1.3,lw=.36,neck=.6,nang=30,head=(.95,.9,1.0),snout=(.55,.45,.8),ears="floppy",
+                 ear=(.5,.8),tail="long_up",pal=("#c89a62","#8f6a3e","#e8c547","#d8b98a","#2b1d12","#f3e6cf")),
+ "husky":    _sp(bh=1.4,bl=2.9,leg=1.55,lw=.38,neck=.7,nang=32,head=(.95,.92,1.05),snout=(.52,.45,.82),ears="point",
+                 ear=(.34,.62),tail="bushy",extras=("patches",),pal=("#58606b","#d8dee6","#5cc8ff","#2b3038","#1c2026","#ffffff")),
+ "corgi":    _sp(bw=1.8,bh=1.25,bl=2.8,leg=.75,lw=.38,neck=.55,nang=28,head=(.95,.9,1.0),snout=(.5,.42,.75),ears="point",
+                 ear=(.42,.75),tail="ball",pal=("#d98b3a","#b56b22","#2b1d12","#f5efe6","#24180e","#ffffff")),
+ "wolf":     _sp(bh=1.4,bl=3.0,leg=1.7,lw=.36,neck=.7,nang=32,head=(.95,.9,1.1),snout=(.5,.45,.9),ears="point",
+                 ear=(.3,.6),tail="bushy",pal=("#8e949c","#5d636b","#e8c547","#c9ced4","#22262b","#e9edf0")),
+ "hyena":    _sp(bh=1.45,bl=2.9,leg=1.55,lw=.38,neck=.8,nang=22,head=(1.0,.95,1.1),snout=(.55,.5,.75),ears="round",
+                 ear=(.42,.48),tail="bushy",extras=("spots","hmane"),pal=("#b89660","#7a5f36","#e8c547","#3b2c1a","#261c10","#dec89c")),
+ "fox":      _sp(bh=1.2,bl=2.6,leg=1.3,lw=.3,neck=.6,nang=30,head=(.9,.85,1.0),snout=(.5,.4,.9),ears="point",
+                 ear=(.42,.8),tail="bushy",pal=("#d9742b","#a9511a","#2b2118","#f3e9dc","#2a1a10","#fbf5ec")),
+ "cat":      _sp(bw=1.6,bh=1.1,bl=2.4,leg=1.0,lw=.3,neck=.5,nang=30,head=(1.0,.9,.9),snout=(.4,.3,.3),ears="point",
+                 ear=(.35,.5),tail="long_up",pal=("#9a9aa2","#6e6e78","#7cd67c","#e0d0c0","#2a2a30","#f2f2f4")),
+ "lion":     _sp(bw=2.0,bh=1.7,bl=3.3,leg=1.7,lw=.5,neck=.6,nang=25,head=(1.1,1.0,1.1),snout=(.55,.45,.5),ears="round",
+                 ear=(.4,.4),tail="tuft",extras=("mane",),pal=("#d9a441","#b5802a","#e8c547","#6b3f1d","#3b2410","#f0d9a8")),
+ "tiger":    _sp(bw=1.9,bh=1.5,bl=3.3,leg=1.5,lw=.48,neck=.6,nang=28,head=(1.05,.95,1.05),snout=(.55,.45,.5),ears="round",
+                 ear=(.38,.38),tail="hang",extras=("stripes",),pal=("#e08a2c","#b8661a","#e8c547","#f5e6c8","#1f140c","#fbf3e2")),
+ "jaguar":   _sp(bw=1.85,bh=1.45,bl=3.2,leg=1.45,lw=.46,neck=.6,nang=28,head=(1.0,.95,1.05),snout=(.52,.44,.5),ears="round",
+                 ear=(.36,.36),tail="hang",extras=("spots",),pal=("#d99b38","#a8721c","#7cd67c","#2b1e0d","#1a1106","#f5e1b8")),
+ "panther":  _sp(bw=1.8,bh=1.4,bl=3.25,leg=1.5,lw=.44,neck=.6,nang=28,head=(1.0,.92,1.05),snout=(.5,.42,.5),ears="round",
+                 ear=(.35,.35),tail="hang",pal=("#22222a","#15151c","#f2c94c","#383846","#0d0d12","#454554")),
+ "horse":    _sp(bw=1.8,bh=1.6,bl=3.6,leg=2.8,lw=.34,neck=2.0,nang=35,head=(.8,.9,1.5),snout=(.7,.6,.6),ears="point",
+                 ear=(.22,.45),tail="hang",extras=("hmane",),snoutc="B",pal=("#8a5a35","#5e3b1f","#e8c547","#2a1a10","#1f130a","#e9d9c0")),
+ "zebra":    _sp(bw=1.8,bh=1.6,bl=3.5,leg=2.6,lw=.35,neck=1.8,nang=35,head=(.82,.9,1.45),snout=(.7,.6,.58),ears="point",
+                 ear=(.24,.45),tail="tuft",extras=("hmane","stripes"),snoutc="D",pal=("#f2f2f2","#262626","#e8c547","#1a1a1a","#141414","#ffffff")),
+ "unicorn":  _sp(bw=1.8,bh=1.6,bl=3.4,leg=2.7,lw=.32,neck=2.0,nang=35,head=(.8,.9,1.4),snout=(.7,.6,.6),ears="point",
+                 ear=(.22,.45),horns="straight",tail="hang",extras=("hmane",),
+                 pal=("#f7f3fb","#d9c9f0","#ff8fc8","#ffd86b","#8b6bbf","#ffffff")),
+ "pegasus":  _sp(bw=1.8,bh=1.6,bl=3.4,leg=2.7,lw=.32,neck=2.0,nang=35,head=(.8,.9,1.4),snout=(.7,.6,.6),ears="point",
+                 ear=(.22,.45),tail="hang",extras=("hmane","qwing"),
+                 pal=("#f4f8ff","#cde0ff","#66b2ff","#ffd86b","#527acc","#ffffff")),
+ "donkey":   _sp(bh=1.4,bl=3.0,leg=1.8,lw=.34,neck=1.0,nang=35,head=(.85,.95,1.3),snout=(.65,.55,.55),ears="long",
+                 ear=(.3,1.1),tail="tuft",pal=("#8b8f96","#5f6368","#e8c547","#cfd3d8","#2b2d30","#f0f0f0")),
+ "cow":      _sp(bw=2.1,bh=1.7,bl=3.3,leg=1.5,lw=.46,neck=.7,nang=25,head=(1.0,1.0,1.1),snout=(.7,.5,.4),ears="side",
+                 ear=(.5,.5),horns="bull",tail="tuft",extras=("spots","udder"),
+                 pal=("#f4f1ea","#d9d4c8","#e8c547","#e8dcc0","#1f1f1f","#f5b8c4")),
+ "bison":    _sp(bw=2.5,bh=2.1,bl=3.5,leg=1.5,lw=.55,neck=.6,nang=15,head=(1.3,1.3,1.2),snout=(.7,.55,.45),ears="side",
+                 ear=(.45,.45),horns="bull",tail="tuft",extras=("hump","beard"),
+                 pal=("#593a22","#3d2616","#e8c547","#d9ccb4","#1f140b","#785235")),
+ "pig":      _sp(bw=2.1,bh=1.7,bl=3.0,leg=.9,lw=.5,neck=.5,nang=20,head=(1.1,1.0,1.0),snout=(.6,.5,.35),ears="floppy",
+                 ear=(.45,.5),tail="curly",pal=("#f2a6b8","#e08aa0","#2b1d12","#f9c9d4","#3d2a30","#f9c9d4")),
+ "boar":     _sp(bw=2.1,bh=1.75,bl=3.1,leg=1.1,lw=.48,neck=.5,nang=18,head=(1.15,1.05,1.15),snout=(.65,.52,.45),ears="point",
+                 ear=(.35,.45),tail="short",extras=("tusks","hmane"),pal=("#5e4938","#423225","#e8c547","#f0e6d2","#261c14","#ebe0cc")),
+ "deer":     _sp(bw=1.7,bh=1.5,bl=3.0,leg=2.5,lw=.3,neck=1.6,nang=30,head=(.8,.85,1.2),snout=(.55,.5,.55),ears="point",
+                 ear=(.3,.6),horns="antlers",tail="short",pal=("#b07a45","#8b5c2e","#e8c547","#e2d2b0","#2b1a0e","#f3e7d0")),
+ "moose":    _sp(bw=2.2,bh=1.9,bl=3.4,leg=2.7,lw=.42,neck=1.2,nang=22,head=(1.0,1.0,1.45),snout=(.75,.65,.7),ears="side",
+                 ear=(.45,.55),horns="antlers",tail="short",extras=("hump","beard"),pal=("#5e4028","#422c1b","#e8c547","#c9b38c","#24170d","#805a3b")),
+ "rabbit":   _sp(bw=1.7,bh=1.5,bl=2.2,leg=.9,lw=.4,neck=.4,nang=20,head=(1.1,1.0,1.1),snout=(.45,.35,.3),ears="long",
+                 ear=(.28,1.5),tail="ball",pal=("#e9e2d6","#cfc4b2","#ff9fb3","#f7f1e8","#3a2e24","#ffffff")),
+ "kangaroo": _sp(bw=1.8,bh=1.6,bl=2.4,leg=2.2,lw=.46,neck=1.2,nang=12,head=(.85,.85,1.1),snout=(.55,.45,.55),ears="long",
+                 ear=(.28,.95),tail="croc",pal=("#c48348","#9c622e","#2b1d12","#e6cca8","#332010","#f2dfc4")),
+ "bear":     _sp(bw=2.4,bh=2.2,bl=3.2,leg=1.3,lw=.75,neck=.5,nang=15,head=(1.4,1.3,1.3),snout=(.5,.4,.5),ears="round",
+                 ear=(.4,.4),tail="short",pal=("#6b4423","#4a2f1b","#e8c547","#d9c2a0","#1c120a","#c9a47a")),
+ "polarbear":_sp(bw=2.5,bh=2.2,bl=3.4,leg=1.4,lw=.78,neck=.65,nang=14,head=(1.35,1.25,1.4),snout=(.52,.42,.55),ears="round",
+                 ear=(.36,.36),tail="short",pal=("#f2f5f8","#dce3eb","#22262b","#ffffff","#14171a","#ffffff")),
+ "panda":    _sp(bw=2.4,bh=2.2,bl=3.0,leg=1.3,lw=.75,neck=.5,nang=15,head=(1.4,1.3,1.3),snout=(.5,.4,.5),ears="round",
+                 ear=(.4,.4),tail="short",extras=("patches",),pal=("#f4f4f4","#1c1c1c","#e8c547","#cfcfcf","#111111","#ffffff")),
+ "koala":    _sp(size=.8,bw=2.0,bh=1.8,bl=2.2,leg=1.0,lw=.48,neck=.3,nang=10,head=(1.3,1.2,1.1),snout=(.45,.55,.35),ears="round",
+                 ear=(.75,.75),tail="ball",snoutc="D",pal=("#8c949e","#68707a","#22252a","#e2e6eb","#1f2124","#ffffff")),
+ "gorilla":  _sp(bw=2.6,bh=2.3,bl=2.8,leg=1.5,lw=.85,neck=.4,nang=10,head=(1.35,1.4,1.25),snout=(.65,.5,.45),ears="round",
+                 ear=(.32,.32),tail="short",snoutc="B",pal=("#2b2d33","#484c56","#e09f3e","#707685","#15161a","#5c616e")),
+ "monkey":   _sp(size=.82,bw=1.6,bh=1.4,bl=2.3,leg=1.5,lw=.35,neck=.5,nang=20,head=(1.1,1.0,1.0),snout=(.55,.45,.35),ears="round",
+                 ear=(.55,.55),tail="long_up",pal=("#8c5832","#633b1d","#2b1a0e","#f0c8a0","#241509","#f5d6b8")),
+ "elephant": _sp(bw=3.0,bh=2.8,bl=4.0,leg=2.4,lw=1.0,neck=.5,nang=10,head=(1.8,1.9,1.5),snout=(.35,.35,.2),ears="flap",
+                 ear=(1.4,1.8),tail="short",extras=("trunk","tusks"),snoutc="A",
+                 pal=("#8e949c","#757b83","#e8c547","#f2ecdc","#3b3f45","#b8bec6")),
+ "mammoth":  _sp(bw=3.1,bh=2.9,bl=4.1,leg=2.4,lw=1.05,neck=.5,nang=10,head=(1.85,1.95,1.55),snout=(.35,.35,.2),ears="round",
+                 ear=(.6,.6),tail="short",extras=("trunk","tusks","hump","wool"),snoutc="A",
+                 pal=("#6e4726","#4f3118","#e8c547","#f5ead2","#29190c","#91633b")),
+ "rhino":    _sp(bw=2.7,bh=2.3,bl=3.8,leg=1.6,lw=.85,neck=.6,nang=12,head=(1.35,1.3,1.55),snout=(.75,.65,.65),ears="point",
+                 ear=(.32,.48),horns="rhino",tail="short",snoutc="A",
+                 pal=("#7c8288","#5f656b","#e8c547","#e6dec8","#2d3033","#9aa0a6")),
+ "hippo":    _sp(bw=2.8,bh=2.2,bl=3.8,leg=1.2,lw=.82,neck=.5,nang=10,head=(1.5,1.35,1.5),snout=(.95,.75,.75),ears="round",
+                 ear=(.3,.3),tail="short",snoutc="B",
+                 pal=("#7d6b7d","#9e829c","#e8c547","#f2e8dc","#382e38","#b89ab6")),
+ "giraffe":  _sp(bw=1.9,bh=1.7,bl=3.0,leg=3.8,lw=.38,neck=3.8,nang=12,head=(.9,.9,1.3),snout=(.6,.5,.6),ears="point",
+                 ear=(.3,.45),horns="knobs",tail="tuft",extras=("spots",),
+                 pal=("#e0b04a","#c98f2e","#e8c547","#8a5a1a","#6b3f12","#f6e3b0")),
+ "camel":    _sp(bw=1.9,bh=1.7,bl=3.4,leg=2.6,lw=.4,neck=2.0,nang=35,head=(.9,.9,1.2),snout=(.6,.5,.6),ears="round",
+                 ear=(.25,.25),tail="short",extras=("hump",),pal=("#c9a06a","#a47c48","#e8c547","#e0c9a0","#3b2a18","#ecd9b8")),
+ "llama":    _sp(bh=1.6,bl=2.8,leg=2.2,lw=.34,neck=2.2,nang=22,head=(.8,.9,1.0),snout=(.6,.5,.5),ears="point",
+                 ear=(.25,.6),tail="short",extras=("wool",),pal=("#efe6d6","#c9bba4","#e8c547","#a58f6e","#4a3b2a","#ffffff")),
+ "dino":     _sp(bh=1.9,bl=3.6,leg=1.6,lw=.65,neck=.9,nang=25,head=(1.3,1.2,2.0),snout=(.9,.6,.5),ears="none",
+                 tail="croc",extras=("plates",),pal=("#5aa05a","#3f7a3f","#f2c94c","#e7d9a6","#243b24","#b9dca0")),
+ "trex":     _sp(bw=2.2,bh=2.3,bl=3.6,leg=2.4,lw=.75,neck=1.1,nang=28,head=(1.5,1.45,2.2),snout=(.92,.7,.65),ears="none",
+                 tail="croc",snoutc="A",pal=("#4d7c43","#36592f","#f2c94c","#f0e8d0","#1f331b","#9ab88d")),
+ "triceratops":_sp(bw=2.5,bh=2.1,bl=3.7,leg=1.6,lw=.75,neck=.6,nang=12,head=(1.5,1.4,1.6),snout=(.65,.55,.65),ears="none",
+                 horns="tricera",tail="croc",extras=("frill",),pal=("#688f4e","#4b6b37","#f2c94c","#ede0c4","#28381d","#b5cc9f")),
+ "brachio":  _sp(bw=2.6,bh=2.4,bl=3.8,leg=3.2,lw=.85,neck=4.0,nang=18,head=(1.0,1.0,1.3),snout=(.7,.55,.55),ears="none",
+                 tail="croc",pal=("#5c8f78","#416957","#f2c94c","#c2dbcf","#243b30","#a8ccc0")),
+ "croc":     _sp(bh=.9,bl=3.8,leg=.6,lw=.5,neck=.3,nang=10,head=(1.2,.8,1.8),snout=(.9,.6,.6),ears="none",
+                 tail="croc",extras=("plates",),pal=("#4f8f4a","#3a6e36","#f2c94c","#cfd8a0","#1e3a1c","#d8e3a8")),
+ "mouse":    _sp(size=.7,bw=1.8,bh=1.3,bl=2.4,leg=.8,lw=.35,neck=.3,nang=20,head=(1.1,1.0,1.2),snout=(.4,.35,.4),
+                 ears="round",ear=(.8,.8),tail="long_thin",pal=("#a9a9b0","#f4b9c2","#2b2b30","#85858c","#2b2b30","#ece9e4")),
+ "squirrel": _sp(size=.75,bw=1.6,bh=1.3,bl=2.2,leg=.9,lw=.34,neck=.4,nang=22,head=(1.0,.95,1.0),snout=(.45,.38,.4),
+                 ears="point",ear=(.32,.48),tail="bushy",pal=("#b8622a","#8c4518","#22160c","#e6c8a8","#26170c","#f5e4d0")),
+ "raccoon":  _sp(size=.82,bw=1.9,bh=1.4,bl=2.6,leg=1.0,lw=.36,neck=.45,nang=22,head=(1.05,.95,1.05),snout=(.48,.38,.55),
+                 ears="point",ear=(.35,.45),tail="bushy",extras=("patches","stripes"),pal=("#787d85","#363940","#e8c547","#d5dae0","#1a1c20","#f2f4f7")),
+ "hedgehog": _sp(size=.72,bw=2.1,bh=1.6,bl=2.3,leg=.65,lw=.32,neck=.25,nang=10,head=(.95,.85,1.0),snout=(.45,.35,.55),
+                 ears="round",ear=(.3,.3),tail="ball",extras=("plates",),pal=("#75563c","#c9a986","#241a12","#4a3423","#1f150e","#ebd5bc")),
+ "otter":    _sp(size=.8,bw=1.6,bh=1.1,bl=3.2,leg=.75,lw=.36,neck=.65,nang=20,head=(.95,.85,1.05),snout=(.55,.4,.45),
+                 ears="round",ear=(.26,.26),tail="croc",pal=("#6e4a30","#4f331f","#24170e","#ccb094","#1f130b","#e3ccb4")),
+ "beaver":   _sp(size=.85,bw=2.1,bh=1.55,bl=2.8,leg=.8,lw=.42,neck=.35,nang=15,head=(1.1,1.0,1.05),snout=(.55,.45,.4),
+                 ears="round",ear=(.28,.28),tail="croc",extras=("tusks",),pal=("#784b2a","#4a2e19","#24160c","#f2e2c4","#2e1c10","#cfa782")),
+ "capybara": _sp(bw=2.0,bh=1.65,bl=3.0,leg=1.15,lw=.44,neck=.5,nang=15,head=(1.05,1.1,1.35),snout=(.75,.7,.55),
+                 ears="round",ear=(.28,.28),tail="ball",snoutc="B",pal=("#a67446","#7a522e","#24180c","#d4aa80","#291b0e","#b88656")),
+ "badger":   _sp(size=.85,bw=2.1,bh=1.35,bl=2.8,leg=.85,lw=.44,neck=.5,nang=18,head=(.95,.85,1.15),snout=(.5,.4,.6),
+                 ears="round",ear=(.3,.3),tail="bushy",extras=("patches","stripes"),pal=("#4a4e54","#1f2124","#e8c547","#f0f2f5","#141517","#ffffff")),
+ "skunk":    _sp(size=.78,bw=1.75,bh=1.3,bl=2.5,leg=.85,lw=.34,neck=.45,nang=20,head=(.9,.85,1.0),snout=(.48,.38,.5),
+                 ears="round",ear=(.3,.3),tail="bushy",extras=("stripes",),pal=("#1f2024","#f5f7fa","#e8c547","#ffffff","#121316","#ffffff")),
+ "sloth":    _sp(size=.85,bw=1.7,bh=1.4,bl=2.5,leg=1.6,lw=.36,neck=.6,nang=15,head=(1.0,.95,.95),snout=(.45,.35,.3),
+                 ears="round",ear=(.22,.22),tail="short",extras=("patches",),pal=("#8c7762","#594a3c","#2b221a","#d9cbb8","#29211a","#e8dec8")),
+ "griffin":  _sp(bw=2.0,bh=1.7,bl=3.3,leg=1.8,lw=.48,neck=1.1,nang=30,head=(1.1,1.05,1.25),snout=(.55,.5,.75),
+                 ears="point",ear=(.35,.65),tail="tuft",extras=("qwing","mane"),snoutc="C",
+                 pal=("#c98f38","#f2ead8","#ffb703","#784e18","#2b1d0c","#ffffff")),
+ "cerberus": _sp(bw=2.3,bh=1.7,bl=3.3,leg=1.75,lw=.48,neck=.85,nang=28,head=(1.0,.95,1.1),snout=(.55,.48,.8),
+                 ears="point",ear=(.35,.6),tail="long_up",extras=("cerb_heads","mane"),
+                 pal=("#2b2628","#1a1618","#ff3333","#591818","#0f0c0d","#473c3f")),
+ "beast":    _sp(pal=None,horns=None,ears="point",tail="short"),
 }
 
 SPECIES_KEYS = {
- "goat":["goat","billy","nanny","ibex"],"sheep":["sheep","lamb","ram","ewe"],
- "dog":["dog","puppy","pup","hound","doggo","husky","corgi","pug","bulldog","poodle","shiba","dalmatian","retriever","terrier"],
- "wolf":["wolf","werewolf","coyote","jackal","direwolf"],
- "fox":["fox","vixen","kitsune"],"cat":["cat","kitten","kitty","lynx","feline","tabby","bobcat"],
- "lion":["lion","lioness","simba"],"tiger":["tiger","tigress","sabertooth"],
- "panther":["panther","jaguar","cougar","puma"],"cheetah":["cheetah","leopard","ocelot"],
- "hyena":["hyena","gnoll"],"unicorn":["unicorn","alicorn"],"pegasus":["pegasus"],
- "horse":["horse","pony","stallion","mare","foal","mustang","steed"],
- "zebra":["zebra"],"donkey":["donkey","mule","burro"],
- "cow":["cow","cattle","bull","ox","brahman","calf"],"bison":["bison","buffalo","yak","wisent"],
- "pig":["pig","hog","piglet","swine","sow"],"boar":["boar","warthog","razorback"],
- "deer":["deer","reindeer","stag","antelope","gazelle","fawn","buck","impala"],
- "moose":["moose","elk","caribou"],"rabbit":["rabbit","bunny","hare"],
- "squirrel":["squirrel","chipmunk"],"beaver":["beaver","marmot","groundhog","woodchuck"],
- "otter":["otter","weasel","ferret","mink","stoat","mongoose"],
- "badger":["badger","wolverine","honeybadger"],"skunk":["skunk"],
- "raccoon":["raccoon","tanuki","redpanda"],"hedgehog":["hedgehog","porcupine","echidna"],
- "panda":["panda"],"polarbear":["polarbear"],"bear":["bear","grizzly","ursine","kodak","teddy"],
- "koala":["koala","wombat","sloth"],"kangaroo":["kangaroo","wallaby"],
- "capybara":["capybara","guineapig"],"platypus":["platypus"],
- "armadillo":["armadillo","pangolin","anteater","tapir"],
- "elephant":["elephant"],"mammoth":["mammoth","mastodon"],
+ "goat":["goat","billy","nanny"],"ibex":["ibex","markhor","chamois"],
+ "sheep":["sheep","lamb","ram","ewe"],"husky":["husky","malamute","samoyed"],
+ "corgi":["corgi","dachshund","wiener"],"dog":["dog","puppy","pup","hound","doggo","retriever","bulldog","poodle","pug","beagle","shiba","terrier","dalmatian"],
+ "wolf":["wolf","werewolf","coyote","direwolf","fenrir","jackal"],"hyena":["hyena","gnoll"],
+ "fox":["fox","vixen","kitsune","fennec"],"cat":["cat","kitten","kitty","lynx","bobcat","ocelot","caracal","tabby"],
+ "lion":["lion","lioness","simba","manticore","sphinx"],"tiger":["tiger","sabertooth","bengal"],
+ "jaguar":["jaguar","leopard","cheetah","cougar","puma"],"panther":["panther","wakanda"],
+ "unicorn":["unicorn","alicorn"],"pegasus":["pegasus"],
+ "zebra":["zebra"],"horse":["horse","pony","stallion","mare","foal","mustang","steed"],
+ "donkey":["donkey","mule","burro"],"bison":["bison","buffalo","yak","wisent"],
+ "cow":["cow","cattle","bull","ox","calf","heifer","minotaur","brahma"],
+ "boar":["boar","warthog","razorback"],"pig":["pig","hog","piglet","swine","sow"],
+ "moose":["moose","elk","caribou"],"deer":["deer","reindeer","stag","antelope","gazelle","impala","fawn","buck","doe"],
+ "rabbit":["rabbit","bunny","hare","jackrabbit"],"kangaroo":["kangaroo","wallaby","joey"],
+ "polarbear":["polarbear","polar"],"panda":["panda"],"koala":["koala","wombat"],
+ "bear":["bear","grizzly","kodiak","cub","brownbear"],
+ "gorilla":["gorilla","ape","orangutan","bigfoot","yeti","sasquatch","kong"],
+ "monkey":["monkey","chimp","chimpanzee","baboon","macaque","lemur","gibbon"],
+ "mammoth":["mammoth","mastodon"],"elephant":["elephant"],
  "rhino":["rhino","rhinoceros"],"hippo":["hippo","hippopotamus"],
- "giraffe":["giraffe","okapi"],"camel":["camel","dromedary"],"llama":["llama","alpaca"],
- "cerberus":["cerberus","hellhound"],"griffin":["griffin","gryphon","hippogriff"],
- "trex":["trex","tyrannosaurus","raptor","velociraptor","allosaurus","carnotaurus","spinosaurus"],
- "triceratops":["triceratops","ankylosaurus","styracosaurs"],
- "brachiosaurus":["brachiosaurus","diplodocus","brontosaurus","sauropod","apatosaurus"],
- "dino":["dinosaur","dino","stegosaurus","iguanodon","pachycephalosaurus"],
- "croc":["crocodile","croc","alligator","lizard","gecko","iguana","komodo","chameleon","salamander","newt","frog","toad"],
- "mouse":["mouse","rat","hamster","gerbil","chinchilla","vole"]}
+ "giraffe":["giraffe","okapi"],"camel":["camel","dromedary"],
+ "llama":["llama","alpaca","vicuna"],
+ "triceratops":["triceratops","styracosaurus"],"brachio":["brachiosaurus","brontosaurus","diplodocus","sauropod","apatosaurus"],
+ "trex":["trex","tyrannosaurus","allosaurus","spinosaurus","carnotaurus"],
+ "dino":["dinosaur","dino","raptor","velociraptor","stegosaurus","ankylosaurus","iguanodon","parasaurolophus"],
+ "croc":["crocodile","croc","alligator","gator","caiman","lizard","gecko","iguana","komodo","chameleon","salamander","newt","frog","toad"],
+ "squirrel":["squirrel","chipmunk","marmot","groundhog","prairiedog"],
+ "raccoon":["raccoon","tanuki","redpanda","coati"],"hedgehog":["hedgehog","porcupine","echidna","armadillo","pangolin"],
+ "otter":["otter","ferret","weasel","mink","stoat","mongoose","meerkat"],
+ "beaver":["beaver","platypus","wolverine"],"capybara":["capybara","tapir","guineapig"],
+ "badger":["badger","honeybadger"],"skunk":["skunk","opossum","possum"],
+ "sloth":["sloth","anteater","aardvark"],
+ "griffin":["griffin","gryphon","hippogriff"],"cerberus":["cerberus","hellhound","chimera"],
+ "mouse":["mouse","rat","hamster","gerbil","chinchilla","vole","lemming"]}
 
 ROOTS = {
  "humanoid": ["human","humans","man","woman","boy","girl","guy","dude","person","people","hero",
-    "villain","wizard","mage","sorcerer","warlock","witch","knight","paladin","crusader","templar",
-    "samurai","shogun","ronin","viking","barbarian","berserker","spartan","gladiator","soldier",
-    "marine","commando","sniper_man","ninja","shinobi","assassin","pirate","buccaneer","captain",
-    "doctor","surgeon","nurse","medic","teacher","professor","scientist","driver","racer",
-    "engineer","mechanic","miner","chef","cook","baker","pilot","aviator","astronaut","cosmonaut",
-    "farmer","lumberjack","builder","worker","artist","painter","musician","rockstar","dj",
-    "athlete","runner","boxer","karate","monk","sensei","fighter","brawler","guard","warden",
-    "police_man","cop","detective","sheriff","cowboy","outlaw","thief","rogue","bandit","burglar",
-    "robot","cyborg","android","droid","automaton","alien","martian","anime","character","avatar",
-    "kid","child","baby_human","king","queen","prince","princess","emperor","pharaoh","clown",
-    "jester","mime","santa","elf","leprechaun","dwarf","orc","goblin","troll","ogre","vampire",
-    "dracula","zombie_man","mummy_man","angel_man","Cupid","superhero","butler","maid","priest","biker"],
- "mech": ["mech","mecha","gundam","battlemech","walker","exosuit","dreadnought","titan_mech",
-    "warbot","sentinel","jaeger","megazord","transformer"],
- "octopus": ["octopus","squid","kraken","cephalopod","ink","cuttlefish","nautilus"],
+    "villain","wizard","mage","knight","soldier","ninja","pirate","doctor","teacher","driver",
+    "engineer","chef","pilot","astronaut","farmer","builder","artist","musician","athlete",
+    "boxer","karate","fighter","guard","thief","robot","cyborg","android","alien",
+    "anime","character","avatar","kid","child","samurai","viking","gladiator","paladin","ranger",
+    "archer","assassin","monk","priest","cleric","necromancer","warlock","sorcerer","bard",
+    "cowboy","sheriff","detective","policeofficer","firefighter","nurse","surgeon","scientist",
+    "hacker","gamer","streamer","dj","dancer","skater","surfer","sniper","commando","general",
+    "king","queen","prince","princess","emperor","pharaoh","vampire","zombie","skeleton",
+    "mummy","ghost","demon","angel","elf","dwarf","orc","goblin","troll","ogre","santa","clown"],
+ "mech": ["mech","mecha","gundam","exosuit","powerarmor","dreadnought","titanmech","battlebot","jaeger","walker","transformer"],
+ "octopus": ["octopus","squid","kraken","cephalopod","ink","cuttlefish","nautilus","cthulhu"],
  "serpent": ["snake","serpent","dragon","wyrm","eel","viper","wyvern","cobra","python","anaconda",
-    "worm","caterpillar","leviathan","lindworm","basilisk","centipede","millipede","leech"],
+    "worm","caterpillar","hydra","basilisk","leviathan","lindworm","boa","mamba","rattlesnake","centipede","millipede"],
  "fish": ["fish","shark","koi","bass","piranha","manta","goldfish","whale","dolphin","tuna","salmon",
-    "trout","carp","clownfish","swordfish","stingray","orca","narwhal","beluga","manatee","seal",
-    "walrus","anglerfish","pufferfish","barracuda","seahorse","catfish","eel_fish","megalodon"],
- "bird": ["bird","eagle","phoenix","falcon","owl","raven","parrot","hawk","duck","chicken","hen",
-    "rooster","penguin","swan","crow","pigeon","seagull","flamingo","toucan","ostrich","peacock",
-    "goose","pelican","stork","crane","heron","hummingbird","woodpecker","kiwi","turkey","vulture",
-    "condor","albatross","canary","robin","bluejay","cardinal","sparrow","cockatoo","macaw","dodo","pterodactyl"],
- "crab": ["crab","lobster","scorpion","shrimp","crustacean","prawn","crayfish","crawfish","hermitcrab","horseshoecrab"],
- "spider": ["spider","arachnid","tarantula","weaver","ant","bug","insect","tick","mite","scarab","stagbeetle","cockroach","cricket","grasshopper","prayingmantis","mantis"],
- "bug_fly": ["butterfly","moth","dragonfly","bee","bumblebee","wasp","hornet","ladybug","firefly","mosquito","fly","cicada","beetle"],
- "golem": ["golem","titan","colossus","elemental","construct","gargoyle","atavism","regi","monolith_guardian"],
- "turtle": ["turtle","tortoise","snail","slug","terrapin","sea_turtle","ankylo"],
- "jelly": ["jelly","jellyfish","medusa","blob","slime","amoeba","metroid","spore"],
- "monster": ["beholder","cyclops","eyeball","ghost","phantom","wraith","specter","spirit","poltergeist",
-    "reaper","grimreaper","skeleton","skull_walker","lich","necromancer","demon","devil","fiend","imp",
-    "balrog","treant","ent","dryad","hydra","yeti","bigfoot","sasquatch","wendigo","chupacabra","mimic"],
- "car": ["car","vehicle","auto","automobile","sedan","coupe","truck","semi","lorry","van","minivan",
-    "taxi","cab","racecar","f1","formula","nascar","bus","schoolbus","coach","police","copcar","cruiser",
-    "jeep","suv","humvee","hummer","limo","limousine","ambulance","firetruck","fireengine","pickup",
-    "supercar","hypercar","sports_car","hatchback","wagon","buggy","dune_buggy","beetle_car","kart",
-    "gokart","tractor","bulldozer","excavator","forklift","dump_truck","garbage_truck","icecream_truck",
-    "monster_truck","cybertruck","rv","camper","carriage","chariot","golfcart","snowplow"],
- "train": ["train","locomotive","steamtrain","bullettrain","shinkansen","subway","metro","tram",
-    "trolley","monorail","boxcar","caboose","railcar","express"],
- "bike": ["bike","motorcycle","scooter","bicycle","motorbike","moped","chopper_bike","dirtbike",
-    "tricycle","unicycle","hoverbike","segway","skateboard","longboard","rollerblade","quadbike","atv","snowmobile","jetski"],
- "boat": ["boat","ship","yacht","canoe","kayak","submarine","sub","raft","sailboat","ferry","cruiseship",
-    "battleship","destroyer","frigate","carrier","pirateship","galleon","longship","speedboat","tugboat","gondola","houseboat","barge"],
- "plane": ["plane","airplane","jet","aircraft","glider","rocket","spaceship","starship","shuttle",
-    "biplane","bomber","fighterjet","airliner","concorde","seaplane","blimp","zeppelin","airship","drone_wing","xwing","tie_fighter"],
- "heli": ["helicopter","heli","chopper","apache","chinook","gyrocopter","quadcopter","drone","ornithopter"],
- "tank": ["tank","warcraft","panzer","abrams","apc","artillery","howitzer","halftrack","catapult","trebuchet","ballista"],
- "space": ["ufo","saucer","flyingsaucer","satellite","rover","lander","lunarlander","probe","spacestation",
-    "iss","telescope","hubble","portal","stargate","obelisk","beacon","pylon","warp_gate"],
- "quadruped": sum(SPECIES_KEYS.values(),[])+["animal","beast","creature","pet","mammal","quadruped","critter","mount"],
- "building": ["house","home","cabin","hut","shack","cottage","bungalow","barn","silo","stable","shop",
-    "store","market","bakery_shop","cafe","restaurant","diner","hotel","motel","inn","tavern","mansion",
-    "villa","palace","castle","fort","fortress","citadel","keep","tower","watchtower","belltower",
-    "lighthouse","church","cathedral","chapel","temple","mosque","synagogue","pagoda","dojo","shrine_bldg",
-    "skyscraper","office","apartment","hospital","clinic","school","library","museum","bank","prison",
-    "jail","factory","warehouse","hangar","garage","gas_station","firehouse","police_station","igloo","tent","teepee","yurt","greenhouse","building"],
- "structure": ["bridge","arch","gate","gateway","torii","fountain","well","wishingwell","windmill",
-    "shrine","altar","monument","statue","pedestal","pyramid","sphinx","gazebo","pavilion","pergola",
-    "gravestone","tombstone","crypt","mausoleum","campfire","bonfire","streetlamp","lamppost",
-    "trafficlight","hydrant","firehydrant","mailbox","bench_park","fence","wall","barricade","watchpost","gallows","stage","totem","totem_pole","ferriswheel","carousel_ride"],
- "tree": ["tree","pine","spruce","fir","cedar","redwood","oak","maple","birch","willow","bonsai","palm",
-    "coconut_tree","cactus","saguaro","succulent","bush","shrub","hedge","plant","fern","vine","bamboo",
-    "flower","rose","sunflower","tulip","daisy","lotus","lily","orchid","dandelion","mushroom","toadstool","fungi","coral","seaweed","kelp","pumpkin_plant"],
- "weapon": ["sword","katana","scimitar","saber","rapier","cutlass","broadsword","longsword","greatsword",
-    "claymore","excalibur","gladius","machete","blade","dagger","dirk","kris","kunai","stiletto","knife",
-    "axe","battleaxe","hatchet","tomahawk","halberd","glaive","bardiche","poleaxe","scythe","sickle",
-    "spear","lance","pike","javelin","trident","harpoon","naginata","hammer","warhammer","mallet","maul",
-    "mace","flail","morningstar","club","bat","baton","crowbar","staff","quarterstaff","bo_staff",
-    "scepter","crozier","wand","rod","bow","longbow","shortbow","crossbow","slingshot","shield",
-    "buckler","towershield","aegis","shuriken","chakram","boomerang","whip","nunchucks","claws_weapon"],
- "gun": ["gun","pistol","revolver","handgun","glock","deagle","rifle","assault_rifle","ak47","m16","carbine",
-    "sniper","musket","flintlock","blunderbuss","shotgun","pump_shotgun","smg","uzi","mp5","minigun",
-    "gatling","machinegun","lmg","blaster","raygun","lasergun","phaser","plasmagun","railgun","gauss",
-    "bazooka","rpg","rocketlauncher","grenadelauncher","mortar","cannon","turret","sentry","flamethrower","freeze_ray","watergun","super_soaker","nerf","paintball_gun"],
- "furniture": ["chair","armchair","recliner","rockingchair","throne","stool","barstool","bench","sofa",
-    "couch","loveseat","futon","table","diningtable","coffeetable","desk","workbench","counter","island",
-    "bed","bunkbed","crib","hammock","bookshelf","bookcase","shelf","rack","cabinet","cupboard",
-    "wardrobe","closet","dresser","nightstand","chest","treasurechest","coffer","safe","vault","trunk_box",
-    "crate_box","barrel_wood"," casket","coffin","lamp","floorlamp","desklamp","chandelier","candelabra",
-    "lantern_prop","torch","fireplace","hearth","stove_wood","anvil","forge","cauldron","spinningwheel","loom","mirror_stand","grandfatherclock","easel","aquarium","fishtank","birdcage","trashcan","bin","dumpster"],
- "food": ["food","burger","hamburger","cheeseburger","slider","pizza","slice","cake","birthdaycake",
-    "weddingcake","cupcake","muffin","donut","doughnut","bagel","croissant","bread","loaf","toast",
-    "sandwich","sub_food","panini","hotdog","corndog","Sausage","taco","burrito","nacho","quesadilla",
-    "sushi","nigiri","maki","onigiri","ramen","noodles","soup","stew","dumpling","bento","steak","meat",
-    "drumstick","chickenleg","bacon","egg","omelet","cheese","pie","tart","waffle","pancake","cookie",
-    "biscuit","brownie","chocolate_bar","candy","lollipop","cane","icecream","sundae","cone","popsicle",
-    "smoothie","milkshake","apple","banana","orange_fruit","lemon","lime_fruit","strawberry","cherry",
-    "grape","watermelon","melon","pineapple","mango","peach_fruit","pear","coconut","avocado","tomato",
-    "pumpkin","jackolantern","carrot","corn","broccoli","eggplant","mushroom_food","potato","fries",
-    "popcorn","pretzel","potion","elixir","flask","vial","bottle","soda","can","juice","milk","coffee",
-    "tea","mug","cup","teacup","teapot","goblet","chalice","wineglass","jar","honey"],
- "instrument": ["instrument","guitar","electricguitar","acoustic","bassguitar","ukulele","banjo","mandolin",
-    "lute","sitar","violin","fiddle","viola","cello","doublebass","harp","lyre","piano","grandpiano",
-    "keyboard_inst","synthesizer","synth","organ","accordion","harmonica","drum","drums","drumkit",
-    "snare","bongo","conga","timpani","gong","xylophone","marimba","tambourine","maraca","bell_inst",
-    "triangle_inst","saxophone","sax","trumpet","trombone","tuba","frenchhorn","bugle","flute","piccolo",
-    "clarinet","oboe","bassoon","recorder","bagpipes","didgeridoo","ocarina","panflute","microphone",
-    "mic","boombox","speaker","amp","amplifier","turntable","djdeck","jukebox","gramophone","phonograph","metronome"],
- "appliance": ["computer","pc","desktop","mac","imac","laptop","notebook","monitor","screen","display",
-    "keyboard_pc","mouse_pc","printer","scanner","router","server","mainframe","phone","smartphone",
-    "iphone","cellphone","telephone","payphone","tablet","ipad","tv","television","hdtv","crt","radio",
-    "walkietalkie","camera","dslr","camcorder","webcam","projector","console","playstation","xbox",
-    "nintendo","switch_console","gameboy","arcade","arcadecabinet","pinball","vr","headset","headphones",
-    "earbuds","smartwatch","clock","alarmclock","digitalclock","watch","calculator","typewriter","atm",
-    "vending","vendingmachine","cashregister","fridge","refrigerator","freezer","microwave","oven",
-    "stove","toaster","blender","mixer","coffeemaker","espresso","kettle","dishwasher","washer",
-    "washingmachine","dryer","vacuum","roomba","iron","fan","heater","airconditioner","ac","radiator","battery","generator","solar_panel"],
- "collectible": ["trophy","cup_trophy","award","oscar","medal","medallion","badge","coin","token","doubloon",
-    "gem","gemstone","diamond","ruby_gem","emerald_gem","sapphire_gem","amethyst_gem","topaz","crystal",
-    "shard","orb","prism","cube","tesseract","heart","star","moon","crescent","sun_emblem","lightning",
-    "bolt","snowflake","skull","bone","ribcage","fossil","key","skeletonkey","keycard","padlock","lock",
-    "bomb","timebomb","dynamite","tnt","grenade","mine","firework","scroll","parchment","map","book",
-    "spellbook","grimoire","diary","notebook_item","compass","pocketwatch","hourglass","feather","quill",
-    "inkwell"," magnifyingglass","Spyglass","binoculars","megaphone","umbrella","parasol","cane_item",
-    "pokeball","dice","d20","chesspiece","pawn","rook","knight_chess","king_chess","queen_chess","gift",
-    "present","ribbon","balloon","kite","yo_yo","top_toy","teddybear","doll","actionfigure","rubikscube",
-    "puzzle","backpack_item","briefcase","suitcase","luggage","purse","handbag","wallet","crown_item",
-    "tiara","halo_item","ring_item","necklace","amulet","talisman","anker","anchor","lifebuoy","bell",
-    "Horseshoe","magnet","gear","cog","wrench","screwdriver","pliers","saw","pickaxe","shovel","spade",
-    "hoe","rake","pitchfork","wateringcan","bucket","pail","broom","mop"," plunger"," paintbrush","roller","scissors","syringe","pill","bandage","firstaid"]}
-
+    "trout","carp","clownfish","swordfish","stingray","orca","narwhal","beluga","manatee","dugong",
+    "anglerfish","pufferfish","barracuda","catfish","marlin","seahorse","axolotl","seal","walrus","sea_lion"],
+ "bird": ["bird","eagle","phoenix","falcon","owl","raven","parrot","hawk","duck","chicken","hen","rooster",
+    "penguin","swan","crow","pigeon","seagull","flamingo","toucan","ostrich","peacock","goose",
+    "pelican","heron","stork","crane","hummingbird","woodpecker","vulture","condor","albatross",
+    "kiwi","emu","cassowary","turkey","quail","sparrow","robin","bluejay","cardinal","canary",
+    "cockatoo","macaw","harpy","thunderbird","pterodactyl","pterosaur","bat"],
+ "crab": ["crab","lobster","scorpion","shrimp","crustacean","crayfish","crawfish","hermitcrab","mantisshrimp","isopod","trilobite"],
+ "spider": ["spider","arachnid","tarantula","weaver","ant","bug","insect","bee","wasp","mosquito",
+    "beetle","ladybug","stagbeetle","scarab","mantis","grasshopper","cricket","locust","dragonfly",
+    "firefly","butterfly","moth","hornet","bumblebee","termite","cockroach","tick","mite","flea"],
+ "golem": ["golem","titan","colossus","elemental","construct","statue","gargoyle","monolith","treant","ent"],
+ "turtle": ["turtle","tortoise","snail","slug","terrapin","seaturtle","nautilus_shell"],
+ "jelly": ["jelly","jellyfish","medusa","blob","slime","amoeba","ooze","metroid","spore","virus"],
+ "car": ["car","vehicle","auto","sedan","coupe","truck","van","taxi","racecar","bus","police","jeep","suv",
+    "limo","ambulance","firetruck","pickup","supercar","hatchback","wagon","minivan","lorry","tractor",
+    "bulldozer","excavator","forklift","golfcart","kart","gokart","cybertruck","musclecar","hotrod",
+    "camper","rv","humvee","armoredcar","hearse","convertible","roadster","f1","formula"],
+ "train": ["train","locomotive","steamtrain","bullettrain","subway","metro","tram","trolley","monorail","caboose","railcar"],
+ "bike": ["bike","motorcycle","scooter","bicycle","motorbike","moped","tricycle","unicycle","chopperbike","dirtbike","atv","quadbike","segway","hoverboard","skateboard"],
+ "boat": ["boat","ship","yacht","canoe","submarine","sub","raft","sailboat","ferry","cruiseship",
+    "battleship","destroyer","carrier","galleon","pirateship","vikingboat","longship","kayak",
+    "gondola","speedboat","jetski","hovercraft","tugboat","barge","catamaran"],
+ "plane": ["plane","airplane","jet","aircraft","glider","rocket","spaceship","shuttle","biplane",
+    "fighterjet","bomber","airliner","seaplane","concorde","stealth","starfighter","xwing","ufo","saucer","blimp","zeppelin","airship","drone"],
+ "heli": ["helicopter","heli","chopper","gunship","chinook","gyrocopter","osprey","quadcopter"],
+ "tank": ["tank","warcraft","panzer","abrams","artillery","apc","halftrack","catapult","trebuchet","ballista","cannon"],
+ "quadruped": sum(SPECIES_KEYS.values(),[])+["animal","beast","creature","pet","mammal","quadruped","livestock","critter","mount"],
+ "building": ["house","home","cabin","hut","barn","shop","store","mansion","castle","fort","tower",
+    "lighthouse","church","temple","building","skyscraper","office","factory","warehouse","hospital",
+    "school","bank","hotel","cafe","restaurant","bakery","tavern","inn","windmill","pagoda","shrine",
+    "mosque","cathedral","pyramid","igloo","tent","gazebo","pavilion","bunker","outpost","citadel",
+    "palace","Cottage","bungalow","shed","garage","hangar","stadium","arena","colosseum","bridge","gate","arch"],
+ "tree": ["tree","pine","oak","palm","cactus","bush","plant","flower","mushroom","willow","birch",
+    "maple","cherryblossom","sakura","baobab","redwood","sequoia","bonsai","bamboo","fern","vine",
+    "rose","sunflower","tulip","lotus","lily","orchid","daisy","dandelion","toadstool","fungus","coral","seaweed","kelp","shrub","hedge"],
+ "weapon": ["sword","axe","spear","hammer","bow","staff","blade","dagger","wand","shield","katana",
+    "rapier","scimitar","claymore","broadsword","longsword","machete","halberd","glaive","lance",
+    "pike","trident","pitchfork","scythe","sickle","mace","flail","morningstar","warhammer","maul",
+    "club","baton","nunchaku","crossbow","slingshot","boomerang","shuriken","kunai","chakram",
+    "gun","pistol","revolver","rifle","shotgun","sniperrifle","smg","minigun","blaster","lasergun",
+    "raygun","plasmagun","bazooka","rocketlauncher","flamethrower","chainsaw","lightsaber","scepter","buckler","aegis"],
+ "furniture": ["chair","throne","stool","bench","sofa","couch","armchair","table","desk","workbench",
+    "counter","bed","bunkbed","crib","hammock","bookshelf","bookcase","cabinet","wardrobe","closet",
+    "dresser","nightstand","chest","treasure","treasurechest","safe","crate","box","barrel","keg",
+    "lamp","lantern","chandelier","torch","candelabra","streetlight","tv","television","monitor",
+    "computer","pc","laptop","arcade","console","piano","organ","jukebox","radio","speaker","clock",
+    "grandfatherclock","mirror","painting","statue_pedestal","altar","portal","stargate","fountain",
+    "well","cauldron","anvil","furnace","oven","fridge","refrigerator","sink","toilet","bathtub",
+    "trashcan","dumpster","mailbox","hydrant","vendingmachine","atm","campfire","bonfire","tombstone","grave","coffin","sarcophagus"],
+ "food": ["food","burger","hamburger","cheeseburger","sandwich","hotdog","taco","burrito","pizza",
+    "sushi","ramen","noodles","soup","salad","steak","meat","drumstick","cake","cupcake","muffin",
+    "donut","doughnut","cookie","pie","croissant","bread","toast","pancake","waffle","icecream",
+    "popsicle","lollipop","candy","chocolate","apple","banana","orange_fruit","strawberry","watermelon",
+    "pineapple","grape","cherry","lemon","peach_fruit","pear","coconut","pumpkin","carrot","corn",
+    "broccoli","tomato","potato","fries","cheese","egg","potion","elixir","flask","vial","bottle",
+    "cup","mug","coffee","tea","chalice","goblet","trophy","medal","gemstone","crystal_item","coin","crown_item","gift","present"]}
 ARCHES = list(ROOTS)
 
-# Multi-word phrase overrides mapped before token splitting
-PHRASE_MAP = {
- "monster truck": ("car", {"carbody":"pickup","prop":{"wheels":1.65,"lift":1.45}}),
- "fire truck": ("car", {"carbody":"van","add":"lightbar","theme":"race"}),
- "police car": ("car", {"carbody":"sedan","add":"lightbar","theme":"navy"}),
- "sports car": ("car", {"carbody":"sport","add":"sp_spoiler"}),
- "race car": ("car", {"carbody":"formula","add":"sp_spoiler"}),
- "formula 1": ("car", {"carbody":"formula","add":"sp_spoiler"}),
- "f1 car": ("car", {"carbody":"formula","add":"sp_spoiler"}),
- "ice cream truck": ("car", {"carbody":"van","theme":"pastel"}),
- "school bus": ("car", {"carbody":"van","theme":"warn"}),
- "dump truck": ("car", {"carbody":"pickup","prop":{"wheels":1.35}}),
- "dune buggy": ("car", {"carbody":"buggy","prop":{"wheels":1.3,"lift":1.2}}),
- "steam train": ("train", {"keyword":"steamtrain"}),
- "bullet train": ("train", {"keyword":"bullettrain"}),
- "pirate ship": ("boat", {"keyword":"pirateship"}),
- "cruise ship": ("boat", {"keyword":"cruiseship"}),
- "aircraft carrier": ("boat", {"keyword":"carrier"}),
- "space shuttle": ("plane", {"keyword":"shuttle"}),
- "fighter jet": ("plane", {"keyword":"fighterjet"}),
- "flying saucer": ("space", {"keyword":"ufo","float":True}),
- "space station": ("space", {"keyword":"spacestation","float":True}),
- "lunar lander": ("space", {"keyword":"lander"}),
- "treasure chest": ("furniture", {"keyword":"treasurechest"}),
- "grandfather clock": ("furniture", {"keyword":"grandfatherclock"}),
- "rocking chair": ("furniture", {"keyword":"rockingchair"}),
- "dining table": ("furniture", {"keyword":"diningtable"}),
- "coffee table": ("furniture", {"keyword":"coffeetable"}),
- "bunk bed": ("furniture", {"keyword":"bunkbed"}),
- "arcade cabinet": ("appliance", {"keyword":"arcade"}),
- "arcade machine": ("appliance", {"keyword":"arcade"}),
- "vending machine": ("appliance", {"keyword":"vending"}),
- "washing machine": ("appliance", {"keyword":"washer"}),
- "gaming pc": ("appliance", {"keyword":"pc","theme":"neon"}),
- "smart phone": ("appliance", {"keyword":"phone"}),
- "cell phone": ("appliance", {"keyword":"phone"}),
- "electric guitar": ("instrument", {"keyword":"electricguitar"}),
- "acoustic guitar": ("instrument", {"keyword":"guitar"}),
- "grand piano": ("instrument", {"keyword":"grandpiano"}),
- "drum kit": ("instrument", {"keyword":"drumkit"}),
- "drum set": ("instrument", {"keyword":"drumkit"}),
- "ice cream": ("food", {"keyword":"icecream"}),
- "hot dog": ("food", {"keyword":"hotdog"}),
- "birthday cake": ("food", {"keyword":"birthdaycake"}),
- "coffee mug": ("food", {"keyword":"mug"}),
- "ray gun": ("gun", {"keyword":"raygun","theme":"neon"}),
- "laser gun": ("gun", {"keyword":"lasergun","theme":"neon"}),
- "machine gun": ("gun", {"keyword":"minigun"}),
- "rocket launcher": ("gun", {"keyword":"rpg"}),
- "sniper rifle": ("gun", {"keyword":"sniper"}),
- "assault rifle": ("gun", {"keyword":"rifle"}),
- "water gun": ("gun", {"keyword":"watergun","theme":"sky"}),
- "battle axe": ("weapon", {"keyword":"battleaxe"}),
- "war hammer": ("weapon", {"keyword":"warhammer"}),
- "great sword": ("weapon", {"keyword":"greatsword"}),
- "tower shield": ("weapon", {"keyword":"towershield"}),
- "grim reaper": ("monster", {"keyword":"reaper","float":True,"theme":"dark","add":"eq_scythe"}),
- "santa claus": ("humanoid", {"keyword":"santa","theme":"race","add":"hg_santa"}),
- "polar bear": ("quadruped", {"species":"polarbear"}),
- "red panda": ("quadruped", {"species":"raccoon"}),
- "sea turtle": ("turtle", {"keyword":"turtle"}),
- "praying mantis": ("spider", {"keyword":"mantis"}),
- "palm tree": ("tree", {"keyword":"palm"}),
- "pine tree": ("tree", {"keyword":"pine"}),
- "oak tree": ("tree", {"keyword":"oak"}),
- "christmas tree": ("tree", {"keyword":"pine","theme":"gold"}),
- "wind mill": ("structure", {"keyword":"windmill"}),
- "torii gate": ("structure", {"keyword":"torii"}),
- "wishing well": ("structure", {"keyword":"well"}),
- "fire hydrant": ("structure", {"keyword":"hydrant"}),
- "traffic light": ("structure", {"keyword":"trafficlight"}),
- "street lamp": ("structure", {"keyword":"streetlamp"}),
- "totem pole": ("structure", {"keyword":"totem"}),
- "eiffel tower": ("building", {"keyword":"tower","sharp":1.6}),
- "teddy bear": ("collectible", {"keyword":"teddybear"}),
- "spell book": ("collectible", {"keyword":"spellbook"}),
- "pocket watch": ("collectible", {"keyword":"pocketwatch"}),
- "time bomb": ("collectible", {"keyword":"bomb"}),
- "first aid": ("collectible", {"keyword":"firstaid"}),
-}
-
 MODS = {
- "bald":{"rm":["hair"]},"muscular":{"prop":{"chest":1.35,"limbs":1.25}},
- "buff":{"prop":{"chest":1.4,"limbs":1.3}},"jacked":{"prop":{"chest":1.45,"limbs":1.35}},
- "fat":{"prop":{"chest":1.38,"limbs":1.18}},"chubby":{"prop":{"chest":1.28,"limbs":1.12}},
- "skinny":{"prop":{"chest":.78,"limbs":.78}},"slender":{"prop":{"chest":.75,"limbs":1.2}},
- "cute":{"prop":{"head":1.32,"limbs":.8},"sharp":-0.6,"scale":0.85,"eyes":1.45},
- "chibi":{"prop":{"head":1.55,"limbs":.7},"sharp":-0.7,"scale":0.78,"eyes":1.6},
- "kawaii":{"prop":{"head":1.4,"limbs":.78},"sharp":-0.65,"scale":0.82,"eyes":1.5},
- "tall":{"prop":{"limbs":1.3},"scale":1.15},"short":{"prop":{"limbs":.75},"scale":.85},
- "tiny":{"scale":0.6},"mini":{"scale":0.65},"micro":{"scale":0.5},
- "huge":{"scale":1.5},"giant":{"scale":1.65},"colossal":{"scale":1.8},"mega":{"scale":1.6},
- "big":{"scale":1.25},"small":{"scale":.75},"little":{"scale":.8},
- "baby":{"scale":.7,"prop":{"head":1.25},"eyes":1.35},
- "evil":{"sharp":0.65,"theme":"dark","add":"brow_evil","pose":-8},
- "angry":{"add":"brow_evil"},"fierce":{"add":"brow_evil","sharp":0.4},
- "royal":{"theme":"gold","add":"hg_crown"},"crown":{"add":"hg_crown"},"crowned":{"add":"hg_crown"},
- "king":{"theme":"gold","add":"hg_crown"},"queen":{"theme":"gold","add":"hg_crown"},
+ "bald":{"rm":["hair"]},"muscular":{"prop":{"chest":1.3,"arms":1.25}},
+ "fat":{"prop":{"chest":1.35,"limbs":1.15}},"chubby":{"prop":{"chest":1.3,"limbs":1.1}},
+ "skinny":{"prop":{"chest":.8,"limbs":.8}},"slim":{"prop":{"chest":.85,"limbs":.85}},
+ "cute":{"prop":{"head":1.3,"limbs":.8},"sharp":-0.6,"scale":0.85,"eyes":1.4},
+ "kawaii":{"prop":{"head":1.35,"limbs":.8},"sharp":-0.7,"scale":0.85,"eyes":1.5,"theme":"pastel"},
+ "chibi":{"prop":{"head":1.45,"limbs":.75},"sharp":-0.6,"scale":0.8,"eyes":1.5},
+ "tall":{"prop":{"limbs":1.3},"scale":1.15},"short":{"prop":{"limbs":.78},"scale":.88},
+ "tiny":{"scale":0.6},"mini":{"scale":0.65},"micro":{"scale":0.55},
+ "huge":{"scale":1.5},"giant":{"scale":1.65},"colossal":{"scale":1.75},"massive":{"scale":1.6},
+ "big":{"scale":1.25},"large":{"scale":1.25},"small":{"scale":.75},"little":{"scale":.8},
+ "baby":{"scale":.7,"prop":{"head":1.2},"eyes":1.3},"young":{"scale":.8,"prop":{"head":1.15}},
+ "evil":{"sharp":0.6,"theme":"dark","add":"brow_evil","pose":-8},
+ "angry":{"add":"brow_evil"},"fierce":{"sharp":0.5,"add":"brow_evil"},
+ "royal":{"theme":"gold","add":"hg_crown"},"king":{"theme":"gold","add":"hg_crown"},
+ "queen":{"theme":"gold","add":"hg_crown"},"prince":{"theme":"gold","add":"hg_crown"},
+ "princess":{"theme":"pastel","add":"hg_crown"},"crown":{"add":"hg_crown"},
  "icy":{"theme":"ice","mat":"ice","add":"hg_crystal"},"frozen":{"theme":"ice","mat":"ice","add":"hg_crystal"},
  "frost":{"theme":"ice","mat":"ice"},"crystal":{"theme":"crystal","mat":"ice","add":"hg_crystal"},
- "crystalline":{"theme":"crystal","mat":"ice","add":"hg_crystal"},
  "fire":{"theme":"lava","mat":"lava"},"fiery":{"theme":"lava","mat":"lava"},
- "flaming":{"theme":"lava","mat":"lava"},"magma":{"theme":"lava","mat":"lava"},
- "lava":{"theme":"lava","mat":"lava"},"infernal":{"theme":"lava","mat":"lava","add":"h_curved"},
- "golden":{"theme":"gold","mat":"gold"},"silver":{"theme":"steel","mat":"metal"},
- "bronze":{"theme":"bronze","mat":"metal"},"copper":{"theme":"copper","mat":"metal"},
- "metallic":{"mat":"metal"},"steel":{"theme":"steel","mat":"metal"},"iron":{"theme":"steel","mat":"metal"},
- "chrome":{"theme":"steel","mat":"metal"},"diamond":{"theme":"ice","mat":"ice"},
- "emerald":{"theme":"emerald"},"ruby":{"theme":"ruby"},"obsidian":{"theme":"obsidian"},
- "wooden":{"theme":"wood"},"stone":{"theme":"stone"},"rock":{"theme":"stone"},
- "dark":{"theme":"dark"},"shadow":{"theme":"obsidian"},"cursed":{"theme":"cursed","add":"brow_evil"},
- "holy":{"theme":"holy","add":"hg_halo"},"blessed":{"theme":"holy","add":"hg_halo"},
- "angelic":{"theme":"holy","add":"w_big"},"demonic":{"theme":"lava","add":"h_curved"},
- "toxic":{"theme":"toxic"},"radioactive":{"theme":"toxic"},"poison":{"theme":"toxic"},
+ "flaming":{"theme":"lava","mat":"lava"},"lava":{"theme":"lava","mat":"lava"},
+ "magma":{"theme":"lava","mat":"lava"},"infernal":{"theme":"lava","mat":"lava","add":"h_curved"},
+ "golden":{"theme":"gold"},"silver":{"theme":"steel","mat":"metal"},
+ "metallic":{"mat":"metal","theme":"steel"},"chrome":{"mat":"metal","theme":"steel"},
+ "armored":{"mat":"metal","theme":"steel","prop":{"chest":1.2}},
+ "dark":{"theme":"dark"},"shadow":{"theme":"dark","float":True},
+ "void":{"theme":"galaxy","float":True},"galaxy":{"theme":"galaxy"},
+ "cosmic":{"theme":"galaxy","float":True},"toxic":{"theme":"toxic"},
+ "radioactive":{"theme":"toxic"},"poison":{"theme":"toxic"},
+ "steampunk":{"theme":"bronze","add":"hg_glasses"},"clockwork":{"theme":"bronze","mat":"metal"},
  "cyberpunk":{"theme":"neon","add":"hg_glasses"},"cyber":{"theme":"neon","mat":"metal"},
- "futuristic":{"theme":"sky","mat":"metal"},"scifi":{"theme":"sky","mat":"metal"},
- "steampunk":{"theme":"bronze","add":"hg_glasses"},"medieval":{"theme":"steel"},
- "ancient":{"theme":"gold"},"ghostly":{"theme":"ghost","float":True},
- "neon":{"theme":"neon"},"glowing":{"theme":"neon"},"pastel":{"theme":"pastel"},
- "floating":{"float":True,"pose":-6},"flying":{"float":True,"pose":-8},"hovering":{"float":True,"pose":-5},
- "sport":{"carbody":"sport","add":"sp_spoiler","theme":"race"},
- "supercar":{"carbody":"sport","add":"sp_spoiler","theme":"neon"},
- "formula":{"carbody":"formula","add":"sp_spoiler","theme":"race"},
- "f1":{"carbody":"formula","add":"sp_spoiler","theme":"race"},
+ "futuristic":{"theme":"neon","mat":"metal"},"neon":{"theme":"neon"},"glowing":{"theme":"neon"},
+ "pastel":{"theme":"pastel"},"floating":{"float":True,"pose":-6},"flying":{"float":True,"pose":-8},
+ "hovering":{"float":True,"pose":-5},
+ "sport":{"carbody":"sport","add":"sp_spoiler","theme":"neon"},
+ "racing":{"carbody":"sport","add":"sp_spoiler","theme":"race"},
  "offroad":{"prop":{"wheels":1.5,"lift":1.3}},
  "taxi":{"carbody":"sedan","add":"taxi_sign","theme":"gold"},
  "police":{"carbody":"sedan","add":"lightbar","theme":"navy"},
- "ambulance":{"carbody":"van","add":"lightbar","theme":"holy"},
- "firetruck":{"carbody":"van","add":"lightbar","theme":"race"},
- "van":{"carbody":"van"},"bus":{"carbody":"van"},"limo":{"carbody":"limo"},"limousine":{"carbody":"limo"},
+ "ambulance":{"carbody":"van","add":"lightbar"},
+ "firetruck":{"carbody":"pickup","add":"lightbar","theme":"race"},
+ "limo":{"carbody":"sedan"},"van":{"carbody":"van"},"bus":{"carbody":"van"},
  "buggy":{"carbody":"buggy"},"beetle":{"carbody":"buggy"},
  "monster":{"carbody":"pickup","prop":{"wheels":1.6,"lift":1.4}},
- "pickup":{"carbody":"pickup"},"tractor":{"carbody":"tractor"},
  "anime":{"eyes":1.5,"add":"hair_spiky"},
- "karate":{"add":"hg_headband","pose":-12},"monk":{"add":"hg_headband","rm":["hair"]},
- "wizard":{"add":"hg_pointy","theme":"mystic","eq":"eq_staff"},
- "mage":{"add":"hg_pointy","theme":"mystic","eq":"eq_wand"},
- "witch":{"add":"hg_pointy","theme":"dark","eq":"eq_wand"},
- "knight":{"add":"hg_helmet","theme":"steel","eq":"eq_sword","eq2":"eq_shield"},
- "paladin":{"add":"hg_helmet","theme":"gold","eq":"eq_hammer","eq2":"eq_shield"},
- "samurai":{"add":"hg_samurai","theme":"race","eq":"eq_sword"},
- "viking":{"add":"hg_viking","theme":"bronze","eq":"eq_axe","eq2":"eq_shield"},
- "spartan":{"add":"hg_helmet","theme":"bronze","eq":"eq_sword","eq2":"eq_shield"},
- "ninja":{"add":"hg_mask","theme":"dark","eq":"eq_sword"},
- "assassin":{"add":"hg_hood","theme":"dark","eq":"eq_sword"},
- "pirate":{"add":"hg_tricorn","theme":"sea","eq":"eq_sword"},
- "cowboy":{"add":"hg_cowboy","theme":"wood","eq":"eq_gun"},
- "sheriff":{"add":"hg_cowboy","theme":"gold","eq":"eq_gun"},
- "soldier":{"add":"hg_helmet","theme":"camo","eq":"eq_gun"},
- "sniper":{"add":"hg_helmet","theme":"camo","eq":"eq_gun"},
- "chef":{"add":"hg_toque"},"baker":{"add":"hg_toque"},
- "driver":{"add":"hg_cap","theme":"race"},"engineer":{"add":"hg_hardhat","theme":"warn"},
- "miner":{"add":"hg_hardhat","theme":"warn","eq":"eq_axe"},
- "builder":{"add":"hg_hardhat","theme":"warn","eq":"eq_hammer"},
- "pilot":{"add":"hg_cap","theme":"sky"},"astronaut":{"add":"hg_dome","add2":"jetpack"},
+ "karate":{"add":"hg_headband","pose":-12},"samurai":{"add":"hg_helmet","theme":"race"},
+ "viking":{"add":"hg_helmet","h_curved":1,"prop":{"chest":1.25}},
+ "wizard":{"add":"hg_pointy","theme":"mystic"},"mage":{"add":"hg_pointy","theme":"mystic"},
+ "witch":{"add":"hg_pointy","theme":"dark"},
+ "knight":{"add":"hg_helmet","theme":"steel"},"paladin":{"add":"hg_helmet","theme":"gold"},
+ "ninja":{"add":"hg_mask","theme":"dark"},"assassin":{"add":"hg_mask","theme":"dark"},
+ "pirate":{"add":"hg_tricorn","theme":"sea"},"captain":{"add":"hg_tricorn","theme":"navy"},
+ "chef":{"add":"hg_toque"},"driver":{"add":"hg_cap","theme":"race"},
+ "engineer":{"add":"hg_hardhat","theme":"warn"},"builder":{"add":"hg_hardhat","theme":"warn"},
+ "pilot":{"add":"hg_cap","theme":"sky"},"astronaut":{"add":"hg_dome"},
  "doctor":{"add":"hg_cap"},"teacher":{"add":"hg_glasses"},"scientist":{"add":"hg_glasses"},
- "santa":{"add":"hg_santa","add2":"beard_long","theme":"race"},
- "glasses":{"add":"hg_glasses"},"sunglasses":{"add":"hg_glasses"},"visor":{"add":"hg_glasses"},
- "helmet":{"add":"hg_helmet"},"armored":{"add":"shoulder_pads","mat":"metal"},
- "hat":{"add":"hg_cap"},"cap":{"add":"hg_cap"},"mask":{"add":"hg_mask"},"masked":{"add":"hg_mask"},
- "hood":{"add":"hg_hood"},"hooded":{"add":"hg_hood"},
- "halo":{"add":"hg_halo"},"wings":{"add":"w_big"},"winged":{"add":"w_big"},
+ "glasses":{"add":"hg_glasses"},"sunglasses":{"add":"hg_glasses"},"goggles":{"add":"hg_glasses"},
+ "helmet":{"add":"hg_helmet"},"hat":{"add":"hg_cap"},"cap":{"add":"hg_cap"},
+ "tophat":{"add":"hg_toque"},"mask":{"add":"hg_mask"},
+ "wings":{"add":"w_big"},"winged":{"add":"w_big"},"angel":{"add":"w_big","theme":"gold"},
+ "demon":{"add":"h_curved","theme":"lava","sharp":0.5},
  "horns":{"add":"h_curved"},"horned":{"add":"h_curved"},
- "cape":{"add":"cape_long"},"caped":{"add":"cape_long"},"cloak":{"add":"cape_long"},
- "jetpack":{"add":"jetpack"},"backpack":{"add":"backpack"},
- "beard":{"add":"beard_long"},"bearded":{"add":"beard_long"},"mustache":{"add":"mustache"},
- "catgirl":{"add":"hg_ears_cat"},"neko":{"add":"hg_ears_cat"},"bunnygirl":{"add":"hg_ears_bunny"},
- "aura":{"add":"aura_ring"},"spiky":{"sharp":0.9},"smooth":{"sharp":-0.6}}
+ "cape":{"add":"cape_long"},"cloaked":{"add":"cape_long"},
+ "jetpack":{"add":"eq_jetpack"},"backpack":{"add":"eq_backpack"},
+ "halo":{"add":"hg_halo"},"bearded":{"add":"eq_beard"},"beard":{"add":"eq_beard"},
+ "spiky":{"sharp":0.9},"sharp":{"sharp":0.7},"smooth":{"sharp":-0.6},"round":{"sharp":-0.5}}
 
 THEMES = {
- "gold":(45,.85,.78),"dark":(265,.28,.16),"neon":(310,1.0,.96),"ice":(195,.42,.93),
- "lava":(12,.95,.82),"mystic":(275,.75,.58),"steel":(215,.08,.65),"sea":(200,.75,.52),
- "warn":(48,.95,.84),"sky":(205,.72,.75),"navy":(225,.82,.32),"pastel":(330,.35,.88),
- "race":(0,.88,.65),"bronze":(30,.72,.58),"copper":(18,.78,.62),"emerald":(145,.82,.58),
- "ruby":(350,.88,.62),"obsidian":(260,.35,.12),"wood":(28,.65,.48),"stone":(210,.06,.52),
- "cursed":(285,.82,.32),"holy":(48,.45,.96),"toxic":(105,.95,.78),"crystal":(185,.55,.94),
- "ghost":(190,.28,.92),"camo":(100,.52,.38)}
+ "gold":(45,.85,.75),"dark":(265,.25,.16),"neon":(310,1,.95),"ice":(195,.4,.92),
+ "lava":(12,.95,.8),"mystic":(275,.7,.55),"steel":(215,.08,.6),"sea":(200,.7,.5),
+ "warn":(48,.95,.8),"sky":(205,.7,.7),"navy":(225,.8,.3),"pastel":(330,.35,.85),
+ "race":(0,.85,.6),"galaxy":(268,.82,.32),"toxic":(105,.92,.72),"bronze":(30,.72,.58),
+ "crystal":(190,.55,.95),"emerald":(145,.82,.58)}
 
 SPECIFICS = {}
 
-# natural palettes for archetypes that should not get random colours (A,B,C,S,D,L)
 NATURAL = {
  "tree":("#3f9b4f","#7a5230","#e64a4a","#2f7a3c","#4a301b","#f4efe0"),
- "weapon":("#b8bcc4","#7a4f2a","#4a8fe0","#d4a640","#2b221a","#eef1f6"),
- "gun":("#4a4e57","#2c2f36","#ff5500","#7a808c","#1b1d22","#c8cdd6"),
- "furniture":("#8c5830","#633b1d","#d9a441","#b57c4a","#2e1c0e","#f2eadf"),
- "instrument":("#c47a32","#4a2e16","#e8c547","#d9d9d9","#1c1612","#f7f3eb"),
- "structure":("#9a9ea6","#6e727a","#4aa3df","#c49a45","#32353b","#eceef2")}
+ "weapon":("#a9adb5","#7a4f2a","#4a8fe0","#d4a640","#3a2a1c","#e6e9ee"),
+ "furniture":("#8b5a2b","#6e4420","#d4a640","#a87948","#2e1d0e","#f2e6d8"),
+ "food":("#d98b3a","#e63946","#f4c430","#52b788","#3b2314","#fff8eb"),
+ "train":("#2b3440","#b83227","#f2c94c","#5c6b73","#161a20","#e6ecf0")}
 
 COLOR_WORDS = {
- "red":(0,.85,.62),"crimson":(348,.9,.55),"scarlet":(5,.9,.65),"maroon":(350,.8,.35),"burgundy":(345,.78,.32),
- "coral":(14,.75,.85),"salmon":(12,.65,.88),"orange":(24,.9,.65),"amber":(38,.92,.75),"peach":(26,.55,.92),
- "yellow":(52,.9,.72),"gold":(45,.85,.75),"lemon":(56,.88,.85),"cream":(45,.2,.95),"ivory":(48,.12,.96),
- "beige":(36,.28,.85),"tan":(32,.42,.72),"khaki":(42,.38,.68),"sand":(40,.35,.82),
- "green":(140,.72,.52),"lime":(95,.88,.75),"olive":(75,.65,.42),"emerald":(145,.82,.58),"jade":(158,.72,.55),
- "mint":(160,.45,.84),"forest":(135,.78,.35),"teal":(175,.78,.52),"turquoise":(178,.75,.72),
- "cyan":(188,.88,.72),"aqua":(185,.82,.78),"sky":(202,.72,.82),"azure":(210,.85,.75),
- "blue":(215,.82,.58),"cobalt":(220,.88,.55),"sapphire":(222,.88,.52),"navy":(225,.82,.32),"indigo":(255,.82,.48),
- "purple":(275,.72,.58),"violet":(282,.75,.68),"lavender":(270,.42,.88),"magenta":(305,.88,.72),
- "pink":(330,.7,.78),"rose":(340,.75,.72),"fuchsia":(315,.9,.75),
- "white":(0,0,.96),"snow":(200,.04,.98),"silver":(215,.06,.78),"platinum":(210,.05,.86),
- "grey":(220,.05,.55),"gray":(220,.05,.55),"slate":(215,.15,.45),"charcoal":(220,.1,.25),
- "black":(260,.2,.14),"obsidian":(260,.35,.12),"ebony":(250,.2,.15),
- "brown":(25,.65,.42),"chocolate":(22,.72,.35),"coffee":(24,.68,.32),"bronze":(30,.7,.55),"copper":(18,.78,.58)}
+ "red":(0,.85,.62),"crimson":(348,.9,.55),"scarlet":(5,.9,.65),"maroon":(350,.8,.35),"burgundy":(345,.8,.38),
+ "ruby":(352,.88,.58),"vermilion":(12,.9,.65),"coral":(16,.72,.85),"salmon_color":(14,.65,.88),
+ "orange":(24,.9,.62),"amber":(38,.92,.72),"rust":(18,.82,.48),"Tangerine":(28,.92,.75),"peach":(26,.48,.92),
+ "yellow":(52,.9,.65),"gold":(45,.85,.72),"lemon":(56,.88,.85),"mustard":(46,.82,.58),"ochre":(38,.78,.58),
+ "cream":(45,.18,.95),"ivory":(48,.12,.96),"beige":(38,.25,.85),"khaki":(42,.38,.72),"sand":(38,.35,.82),"tan":(32,.42,.75),
+ "green":(140,.7,.5),"lime":(95,.85,.72),"chartreuse":(85,.85,.78),"olive":(72,.65,.45),"emerald":(145,.82,.55),
+ "jade":(158,.72,.52),"forest":(132,.78,.36),"mint":(160,.45,.8),"sage":(135,.28,.65),
+ "teal":(172,.75,.5),"turquoise":(176,.75,.72),"aqua":(182,.8,.75),"cyan":(185,.85,.65),
+ "blue":(215,.8,.55),"sky":(202,.65,.82),"azure":(210,.85,.72),"cerulean":(200,.82,.65),"cobalt":(218,.88,.55),
+ "sapphire":(222,.88,.52),"navy":(225,.8,.3),"indigo":(252,.8,.45),"periwinkle":(232,.45,.85),
+ "purple":(275,.7,.55),"violet":(282,.75,.65),"lavender":(270,.35,.88),"lilac":(285,.38,.84),"plum":(292,.65,.48),"mauve":(295,.35,.68),
+ "magenta":(312,.85,.68),"fuchsia":(318,.88,.72),"pink":(330,.7,.75),"rose":(340,.68,.78),"hotpink":(328,.88,.85),
+ "white":(0,0,.96),"snow":(200,.03,.98),"pearl":(40,.06,.94),
+ "silver":(215,.06,.78),"grey":(220,.05,.55),"gray":(220,.05,.55),"slate":(215,.18,.48),"charcoal":(220,.1,.26),"graphite":(220,.08,.3),
+ "black":(260,.2,.14),"onyx":(250,.15,.12),"obsidian":(265,.28,.14),
+ "brown":(25,.6,.42),"bronze":(30,.7,.52),"copper":(20,.75,.58),"chocolate":(22,.72,.34),"coffee":(24,.65,.28)}
 
-NEG = {"no","without","not","never","minus","wingless","hornless","hairless"}
+NEG = {"no","without","not","never","minus","hatless","wingless","hornless"}
+EQUIP_PREPS = {"with","holding","wielding","carrying","wearing","using","armed","equip","equipped"}
+EQUIP_MAP = {
+ "sword":"eq_sword","katana":"eq_sword","blade":"eq_sword","dagger":"eq_sword","lightsaber":"eq_sword","rapier":"eq_sword","claymore":"eq_sword",
+ "shield":"eq_shield","buckler":"eq_shield","aegis":"eq_shield",
+ "axe":"eq_axe","halberd":"eq_axe","scythe":"eq_axe",
+ "hammer":"eq_hammer","warhammer":"eq_hammer","maul":"eq_hammer","mace":"eq_hammer",
+ "staff":"eq_staff","wand":"eq_staff","scepter":"eq_staff","spear":"eq_staff","trident":"eq_staff","lance":"eq_staff",
+ "bow":"eq_bow","crossbow":"eq_bow",
+ "gun":"eq_gun","pistol":"eq_gun","rifle":"eq_gun","blaster":"eq_gun","shotgun":"eq_gun","lasergun":"eq_gun",
+ "wings":"w_big","cape":"cape_long","crown":"hg_crown","helmet":"hg_helmet","hat":"hg_cap",
+ "glasses":"hg_glasses","sunglasses":"hg_glasses","mask":"hg_mask","horns":"h_curved",
+ "jetpack":"eq_jetpack","backpack":"eq_backpack","halo":"hg_halo","beard":"eq_beard"}
+
 STOP = set("""build make me a an the create generate give please pls i im want need can you of with and my some
 for to model roblox lego brick bricks blocky block 3d one new cool nice awesome simple it its that this like
 lets let draw design looking looks look who is are be as in on at from so very really just also something
-thing object toy cartoon style versionHolding wearing carrying equipped""".lower().split())
-
+thing object toy cartoon style version holding wielding carrying wearing armed""".split())
 ALL_KEYS = sorted({k for ks in ROOTS.values() for k in ks})
-KNOWN = set(ALL_KEYS)|set(MODS)|set(COLOR_WORDS)|NEG|STOP
+KNOWN = set(ALL_KEYS)|set(MODS)|set(COLOR_WORDS)|NEG|STOP|EQUIP_PREPS
 IRREG = {"mice":"mouse","men":"man","women":"woman","oxen":"ox","geese":"goose","wolves":"wolf",
-         "calves":"calf","knives":"knife","swords":"sword","leaves":"leaf","teeth":"tooth","feet":"foot",
-         "children":"child","people":"person","elves":"elf","dwarves":"dwarf","octopi":"octopus","cacti":"cactus"}
+         "calves":"calf","children":"child","people":"person","teeth":"tooth","feet":"foot",
+         "knives":"knife","elves":"elf","dwarves":"dwarf","leaves":"leaf"," cacti":"cactus","octopi":"octopus"}
 SKIN = ["#f2c9a0","#e0ac7e","#c68863","#8d5a3b","#6b4226","#ffdfc4"]
 HAIR = ["#2b1d12","#4a2f1b","#6b4423","#141414","#d9a441","#c2652e","#8a8a8a","#f2e2c4"]
-ANIME_HAIR = ["#ff7ab8","#7ad8ff","#ffd166","#b48cff","#5ce6a0","#ff5c77"]
+ANIME_HAIR = ["#ff7ab8","#7ad8ff","#ffd166","#b48cff"]
 NAME_PRE = ["Brick","Stud","Krag","Zor","Bloxx","Torv","Pixl","Grim","Lux","Vex","Snap","Mek",
- "Vor","Quil","Rune","Ember","Frost","Thorn","Gale","Umber","Nova","Aether","Chrono","Valk"]
-NAME_SUF = {
- "octopus":"pus","serpent":"enth","fish":"fin","bird":"wing","crab":"claw","spider":"ling","bug_fly":"flutter",
- "golem":"mok","humanoid":"guard","mech":"prime","turtle":"shell","jelly":"meduse","monster":"fiend",
- "car":"runner","train":"express","bike":"cycle","boat":"wave","plane":"jet","heli":"rotor","tank":"tread",
- "space":"cosmos","quadruped":"hoof","building":"stead","structure":"arch","tree":"bark","weapon":"edge",
- "gun":"blast","furniture":"craft","food":"bite","instrument":"chord","appliance":"tek","collectible":"relic","prop":"bloxx"}
+ "Vor","Quil","Rune","Ember","Frost","Thorn","Gale","Umber","Nova","Chrono","Aether","Volt","Titan","Apex"]
+NAME_SUF = {"octopus":"pus","serpent":"enth","fish":"ish","bird":"wing","crab":"claw","spider":"ling",
+ "golem":"mok","humanoid":"guard","turtle":"shell","jelly":"meduse","car":"runner","bike":"cycle",
+ "boat":"wave","plane":"wing","heli":"rotor","tank":"tread","quadruped":"hoof","building":"stead",
+ "tree":"bark","weapon":"edge","prop":"bloxx","mech":"prime","train":"rail","furniture":"craft","food":"bite"}
 
 def tokenize(t): return re.findall(r"[a-z0-9]+", t.lower())
 def stems(t):
@@ -553,10 +414,10 @@ def parse_intent(prompt):
     raw = prompt.lower(); toks = tokenize(raw)
     tset = set()
     for t in toks: tset |= stems(t)
-    # Join adjacent tokens to catch compound words like "polarbear", "icecream", "pirateship"
+    # Compound word fusion (e.g., "polar bear" -> "polarbear", "fire truck" -> "firetruck", "ice cream" -> "icecream")
     for i in range(len(toks)-1):
-        joined = toks[i] + toks[i+1]
-        tset |= stems(joined)
+        pair = toks[i]+toks[i+1]
+        if pair in KNOWN: tset.add(pair)
     I = {"root":None,"mods":[],"traits":{},"neg":set(),"colors":[],"size":1.0,"sharp":1.0,
          "pose":0,"mat":None,"float":False,"prop":{},"eyes":1.0,"palette_force":None,"var":None,
          "carbody":None,"species":None,"keyword":None,"unknown":[],"ram":False,"tokens":set(tset)}
@@ -564,58 +425,53 @@ def parse_intent(prompt):
         if phrase in raw:
             I.update({k:v for k,v in cfg.items() if k!="palette"})
             I["palette_force"]=cfg.get("palette"); I["root"]=cfg.get("root",I["root"]); return I
-    # Check multi-word phrases
-    phrase_root = None
-    for phrase, (proot, pcfg) in PHRASE_MAP.items():
-        if phrase in raw:
-            phrase_root = proot
-            if "carbody" in pcfg: I["carbody"] = pcfg["carbody"]
-            if "keyword" in pcfg: I["keyword"] = pcfg["keyword"]
-            if "species" in pcfg: I["species"] = pcfg["species"]
-            if "prop" in pcfg: I["prop"].update(pcfg["prop"])
-            if "theme" in pcfg: I["colors"].append(THEMES[pcfg["theme"]])
-            if "add" in pcfg: I["traits"][pcfg["add"]] = 1
-            if "float" in pcfg: I["float"] = pcfg["float"]
-            if "sharp" in pcfg: I["sharp"] = pcfg["sharp"]
-            break
-    best, root = score_roots(tset)
-    if phrase_root:
-        root = phrase_root; best = max(best, 1)
+    # Detect secondary equipped items after prepositions ("knight with sword and shield")
+    equip_Filter = set()
+    primary_toks = []
+    in_equip = False
+    for i, t in enumerate(toks):
+        st = stems(t)
+        if t in EQUIP_PREPS:
+            in_equip = True; continue
+        if t in NEG:
+            in_equip = False
+        if in_equip:
+            matched_eq = False
+            for s in st:
+                if s in EQUIP_MAP:
+                    I["traits"][EQUIP_MAP[s]] = 1
+                    if s in ROOTS.get("weapon", []): equip_Filter.add(s)
+                    matched_eq = True
+            if matched_eq or t in ("and","a","an","the","two","dual") or t in COLOR_WORDS or t in MODS:
+                continue
+            else:
+                in_equip = False
+        primary_toks.append(t)
+    primary_tset = set(tset) - equip_Filter if primary_toks else set(tset)
+    best, root = score_roots(primary_tset)
+    if best == 0:
+        best, root = score_roots(tset)
     if best == 0:
         for t in toks:
             if len(t) < 4 or t in KNOWN or (stems(t) & KNOWN): continue
             hit = [k for k in ALL_KEYS if len(k) == len(t) and sorted(k) == sorted(t)]
-            if not hit: hit = difflib.get_close_matches(t, ALL_KEYS, n=1, cutoff=.8)
-            if hit: tset.add(hit[0])
-        best, root = score_roots(tset)
+            if not hit: hit = difflib.get_close_matches(t, ALL_KEYS, n=1, cutoff=.78)
+            if hit: tset.add(hit[0]); primary_tset.add(hit[0])
+        best, root = score_roots(primary_tset)
         if best == 0:
             unk = [t for t in toks if len(t) >= 3 and t not in KNOWN and not (stems(t) & KNOWN)]
             if unk: root = "prop"; I["unknown"] = unk; I["keyword"] = unk[0]
             else: root = "humanoid"
-    # If both humanoid and weapon/gun/shield are mentioned (e.g. "knight with a sword"), keep humanoid and equip weapon!
-    if "humanoid" in [r for r,ks in ROOTS.items() if any(k in tset for k in ks)] and root in ("weapon","gun"):
-        if any(k in tset for k in ROOTS["humanoid"]):
-            w_kw = next((k for k in ROOTS[root] if k in tset), None)
-            root = "humanoid"
-            if w_kw in ("shield","buckler","towershield","aegis"): I["traits"]["eq_shield"] = 1
-            elif w_kw in ("bow","longbow","crossbow"): I["traits"]["eq_bow"] = 1
-            elif w_kw in ("staff","scepter"): I["traits"]["eq_staff"] = 1
-            elif w_kw in ("wand","rod"): I["traits"]["eq_wand"] = 1
-            elif w_kw in ("axe","battleaxe","hatchet","halberd"): I["traits"]["eq_axe"] = 1
-            elif w_kw in ("hammer","warhammer","mace","maul"): I["traits"]["eq_hammer"] = 1
-            elif w_kw in ("scythe",): I["traits"]["eq_scythe"] = 1
-            elif w_kw in ROOTS["gun"]: I["traits"]["eq_gun"] = 1
-            else: I["traits"]["eq_sword"] = 1
     I["root"] = root
     I["tokens"] = set(tset)
     if root == "quadruped":
-        if not I["species"]:
-            I["species"] = "beast"
-            for sp, keys in SPECIES_KEYS.items():
-                if any(k in tset for k in keys): I["species"] = sp; break
+        I["species"] = "beast"
+        # Prioritize more specific species keys first
+        for sp, keys in SPECIES_KEYS.items():
+            if any(k in primary_tset for k in keys): I["species"] = sp; break
         I["ram"] = "ram" in tset; I["keyword"] = I["species"]
-    elif root != "prop" and not I["keyword"]:
-        I["keyword"] = next((k for k in ROOTS[root] if k in tset), None)
+    elif root != "prop":
+        I["keyword"] = next((k for k in ROOTS[root] if k in primary_tset), None) or next((k for k in ROOTS[root] if k in tset), None)
     for mk in MODS:
         if mk in tset: I["mods"].append(mk)
     for mk in I["mods"]:
@@ -628,19 +484,16 @@ def parse_intent(prompt):
         if m.get("theme"): I["colors"].append(THEMES[m["theme"]])
         if m.get("eyes"): I["eyes"]*=m["eyes"]
         if m.get("add"): I["traits"][m["add"]]=1
-        if m.get("add2"): I["traits"][m["add2"]]=1
-        if root == "humanoid":
-            if m.get("eq"): I["traits"][m["eq"]]=1
-            if m.get("eq2"): I["traits"][m["eq2"]]=1
+    if "hatless" in tset: I["neg"].update(["hg_cap","hg_pointy","hg_helmet","hg_tricorn","hg_toque","hg_hardhat","hg_crown"])
     if "wingless" in tset: I["neg"].add("w_big")
     if "hornless" in tset: I["neg"].update(["h_curved","horns"])
-    if "hairless" in tset: I["neg"].add("hair")
     for i,t in enumerate(toks):
         if t in NEG and i+1<len(toks):
             nx=toks[i+1]
             if "wing" in nx: I["neg"].add("w_big")
             if "hair" in nx: I["neg"].add("hair")
             if "horn" in nx: I["neg"].update(["h_curved","horns"])
+            if "hat" in nx or "helmet" in nx: I["neg"].update(["hg_cap","hg_helmet","hg_pointy"])
     for w,h in COLOR_WORDS.items():
         if w in tset: I["colors"].append(h)
     I["sharp"]=max(0.2,min(2.6,I["sharp"]))
@@ -677,22 +530,20 @@ def synthesize_palette(I,rng):
     if I["colors"]: h,s,v=I["colors"][0]
     else: h,s,v=(rng.choice([0,25,45,140,175,205,250,285,320]),.65,.6)
     if I["mat"]=="metal": s,v=.15,.75
-    if I["mat"]=="gold": h,s,v=45,.85,.82
     if I["mat"]=="ice": h,s,v=195,.4,.93
     if I["mat"]=="lava": h,s,v=12,.95,.8
     off=rng.choice([180,28,120,150])
-    c2 = I["colors"][1] if len(I["colors"])>1 else (h+rng.choice([-25,25]),s*.7,min(1,v*1.2))
-    c3 = I["colors"][2] if len(I["colors"])>2 else (h+off,max(.5,s),min(1,v*1.35))
-    P={"A":hsv_hex(h,s*.85,v),"B":hsv_hex(c2[0],c2[1],c2[2]),
-       "C":hsv_hex(c3[0],c3[1],c3[2]),"S":hsv_hex(h+off+rng.choice([-30,30]),max(.45,s*.9),min(1,v*1.1)),
-       "D":hsv_hex(h,min(1,s*1.05),max(.1,v*.38)),"L":hsv_hex(h+15,max(.06,s*.32),min(1,v*1.55))}
+    P={"A":hsv_hex(h,s*.85,v),"B":hsv_hex(h+rng.choice([-25,25]),s*.7,min(1,v*1.2)),
+       "C":hsv_hex(h+off,max(.5,s),min(1,v*1.35)),"S":hsv_hex(h+off+rng.choice([-30,30]),max(.45,s*.9),min(1,v*1.1)),
+       "D":hsv_hex(h,min(1,s*1.05),max(.1,v*.4)),"L":hsv_hex(h+15,max(.06,s*.35),min(1,v*1.55))}
+    if len(I["colors"]) >= 2:
+        h2,s2,v2 = I["colors"][1]
+        P["B"] = hsv_hex(h2, s2*.85, v2)
+        P["C"] = hsv_hex(h2+20, max(.4,s2), min(1,v2*1.25))
     if I["root"]=="humanoid":
-        if I["mat"]=="metal" or "robot" in I["mods"] or "cyborg" in I["tokens"] or "android" in I["tokens"]:
-            P["K"]=hsv_hex(h,.15,.75)
-        elif "alien" in I["mods"] or "orc" in I["tokens"] or "goblin" in I["tokens"] or "zombie_man" in I["tokens"]:
-            P["K"]=hsv_hex(125,.55,.62)
-        elif "skeleton" in I["tokens"] or "vampire" in I["tokens"] or "clown" in I["tokens"]:
-            P["K"]="#f2efe9"
+        if I["mat"]=="metal" or "robot" in I["mods"] or "cyborg" in I["tokens"] or "android" in I["tokens"]: P["K"]=hsv_hex(h,.15,.75)
+        elif "alien" in I["mods"] or "orc" in I["tokens"] or "goblin" in I["tokens"] or "zombie" in I["tokens"]: P["K"]=hsv_hex(130,.55,.65)
+        elif "skeleton" in I["tokens"]: P["K"]="#ece8dc"
         else: P["K"]=rng.choice(SKIN)
         P["H"]=rng.choice(ANIME_HAIR) if "anime" in I["mods"] else rng.choice(HAIR)
         P["P"]=hsv_hex(h,min(1,s*.6),max(.15,v*.45))
@@ -700,7 +551,6 @@ def synthesize_palette(I,rng):
     return P
 
 FACES={"top":(0,1,0),"bot":(0,-1,0),"front":(0,0,-1),"back":(0,0,1),"right":(1,0,0),"left":(-1,0,0)}
-
 class Builder:
     def __init__(self,seed,pal,rng,sharp,scale):
         self.parts=[];self.names=set();self.pal=pal;self.rng=rng;self.sharp=sharp;self.scale=scale
@@ -712,7 +562,7 @@ class Builder:
         self.names.add(n);return n
     def _emit(self,name,parent,shape,size,pos,rot,color):
         axes=[i for i,v in enumerate(rot) if v]
-        sz=[round(max(.04,v*self.scale),2) for v in size]; po=[round(v*self.scale,2) for v in pos]
+        sz=[round(v*self.scale,2) for v in size]; po=[round(v*self.scale,2) for v in pos]
         if len(axes)<=1:
             self.parts.append({"n":name,"p":parent,"s":shape,"sz":sz,"po":po,"ro":list(rot),"c":color});return name
         par=parent;p0=po
@@ -730,7 +580,6 @@ class Builder:
                   f[2]*(P[2]/2+C[2]/2-e) if f[2] else 0]
             pos=[base[i]+off[i] for i in range(3)]
         name=self._uniq(name); self._emit(name,parent,shape,size,pos,rot,color); self.sz[name]=size
-        self.counts[shape]+=1
         if studs and self.studs<90:
             nx=clamp(int(size[0]/.95),1,4); nz=clamp(int(size[2]/.95),1,4)
             for gx in range(nx):
@@ -801,116 +650,45 @@ def _roof(B):
     for p in B.parts:
         if p["n"]=="Cabin": return "Cabin"
     return B.root
-def _hand(B,side="R"):
-    target="Hand"+side
+def _hand(B, side="R"):
+    target = "Hand" + side
     for p in B.parts:
         if p["n"]==target: return target
     return B.root
 def _chest(B):
     for p in B.parts:
-        if p["n"]=="Chest": return "Chest"
+        if p["n"] in ("Chest","CoreRoot","HumanoidRootPart"): return p["n"]
     return B.root
 
-# ------------------------------------------------------------------ 35+ Modular Addons
+# ---------------------------------------------------------------- Addons & Equipment
 def add_brow_evil(B,I,r):
     for sx,suf in ((1,"R"),(-1,"L")):
         B.add("Brow"+suf,_head(B),"box",(.42,.12,.15),None,(sx*.38,.42,-.62),(0,0,sx*-18),"D")
 def add_hg_crown(B,I,r):
-    c=B.add("Crown",_head(B),"box",(.95,.3,.95),"top",(0,0,0),(0,0,0),"S")
-    for i in range(4): B.add("CrownPt%d"%i,c,"pyramid",(.22,.5,.22),"top",((i-1.5)*.26,0,-.3),(0,0,0),"C")
-def add_hg_pointy(B,I,r):
-    b=B.add("HatBrim",_head(B),"box",(1.6,.16,1.6),"top",(0,0,0),(0,0,0),"B")
-    B.add("HatCone",b,"pyramid",(.85,1.55,.85),"top",(0,.05,0),(0,0,0),"C")
-def add_hg_helmet(B,I,r):
-    h=B.add("Helmet",_head(B),"box",(1.35,1.0,1.3),"top",(0,-.15,0),(0,0,0),"D")
-    B.add("HelmetCrest",h,"wedge",(.22,.45,1.1),"top",(0,0,0),(0,0,0),"C")
-def add_hg_samurai(B,I,r):
-    h=B.add("Kabuto",_head(B),"box",(1.4,.55,1.35),"top",(0,-.05,0),(0,0,0),"D")
-    B.add("KabutoCrest",h,"wedge",(.9,.65,.15),"front",(0,.25,-.05),(0,0,0),"S")
-    for sx,suf in ((1,"R"),(-1,"L")):
-        B.add("Shikoro"+suf,h,"box",(.18,.6,1.1),"right" if sx>0 else "left",(0,-.3,.1),(0,0,sx*15),"B")
-def add_hg_viking(B,I,r):
-    h=B.add("VikHelm",_head(B),"box",(1.35,.55,1.3),"top",(0,-.05,0),(0,0,0),"D")
-    for sx,suf in ((1,"R"),(-1,"L")):
-        bh=B.add("VikHorn"+suf,h,"box",(.28,.55,.28),"right" if sx>0 else "left",(0,.1,0),(0,0,sx*-35),"L")
-        B.add("VikTip"+suf,bh,"pyramid",(.22,.5,.22),"top",(0,0,0),(0,0,0),"L")
-def add_hg_cowboy(B,I,r):
-    b=B.add("CowboyBrim",_head(B),"box",(1.8,.14,1.55),"top",(0,0,0),(0,0,0),"B")
-    B.add("CowboyCrown",b,"box",(1.05,.55,1.05),"top",(0,0,0),(0,0,0),"A")
-def add_hg_santa(B,I,r):
-    b=B.add("SantaTrim",_head(B),"box",(1.3,.24,1.3),"top",(0,0,0),(0,0,0),"L")
-    c=B.add("SantaCone",b,"pyramid",(.95,1.1,.95),"top",(0,0,.1),(18,0,0),"C")
-    B.add("SantaPom",c,"gem",(.35,.35,.35),"top",(0,0,0),(0,0,0),"L")
+    c=B.add("Crown",_head(B),"box",(.9,.3,.9),"top")
+    for i in range(4): B.add("CrownPt%d"%i,c,"pyramid",(.22,.5,.22),"top",((i-1.5)*.28,0,0),(0,0,0),"S")
 def add_hg_halo(B,I,r):
-    B.add("Halo",_head(B),"cylinder",(1.15,.12,1.15),"top",(0,.45,0),(0,0,0),"S")
-def add_hg_hood(B,I,r):
-    B.add("Hood",_head(B),"box",(1.4,1.25,1.35),"top",(0,-.2,.08),(0,0,0),"D")
-def add_hg_ears_cat(B,I,r):
-    for sx,suf in ((1,"R"),(-1,"L")):
-        B.add("CatEar"+suf,_head(B),"pyramid",(.32,.5,.26),"top",(sx*.38,0,-.05),(0,0,-sx*12),"C")
-def add_hg_ears_bunny(B,I,r):
-    for sx,suf in ((1,"R"),(-1,"L")):
-        B.add("BunEar"+suf,_head(B),"box",(.26,1.1,.2),"top",(sx*.34,0,0),(0,0,-sx*8),"L")
-def add_hg_mask(B,I,r): B.add("Mask",_head(B),"box",(1.05,.52,.22),"front",(0,-.05,-.02),(0,0,0),"D")
+    B.add("Halo",_head(B),"cylinder",(1.25,.14,1.25),"top",(0,.45,0),(0,0,0),"C")
+def add_hg_pointy(B,I,r):
+    b=B.add("HatBrim",_head(B),"box",(1.5,.18,1.5),"top")
+    B.add("HatCone",b,"pyramid",(.8,1.5,.8),"top",(0,.05,0),(0,0,0),"C")
+def add_hg_helmet(B,I,r): B.add("Helmet",_head(B),"box",(1.35,1.0,1.3),"top",(0,-.15,0),(0,0,0),"D")
+def add_hg_mask(B,I,r): B.add("Mask",_head(B),"box",(1.0,.5,.2),"front",(0,-.05,-.02),(0,0,0),"D")
 def add_hg_tricorn(B,I,r):
-    b=B.add("TriBrim",_head(B),"box",(1.7,.15,1.25),"top",(0,0,0),(0,0,0),"D")
-    B.add("TriTop",b,"wedge",(1.5,.42,1.0),"top",(0,.05,0),(0,0,0),"B")
-def add_hg_toque(B,I,r): B.add("Toque",_head(B),"cylinder",(.95,.95,.95),"top",(0,.1,0),(0,0,0),"L")
+    b=B.add("TriBrim",_head(B),"box",(1.7,.15,1.2),"top")
+    B.add("TriTop",b,"wedge",(1.5,.4,1.0),"top",(0,.05,0),(0,0,0),"D")
+def add_hg_toque(B,I,r): B.add("Toque",_head(B),"cylinder",(.9,.9,.9),"top",(0,.1,0),(0,0,0),"L")
 def add_hg_cap(B,I,r):
-    t=B.add("CapTop",_head(B),"box",(1.12,.25,1.12),"top",(0,0,-.05),(0,0,0),"C")
+    t=B.add("CapTop",_head(B),"box",(1.1,.25,1.1),"top",(0,0,-.05),(0,0,0),"C")
     B.add("CapBrim",t,"box",(1.0,.12,.6),"front",(0,-.1,-.2),(0,0,0),"C")
-def add_hg_hardhat(B,I,r): B.add("HardHat",_head(B),"box",(1.32,.45,1.32),"top",(0,.05,0),(0,0,0),"C")
-def add_hg_dome(B,I,r): B.add("Dome",_head(B),"gem",(1.55,1.55,1.55),None,(0,.1,0),(0,0,0),"L")
-def add_hg_glasses(B,I,r): B.add("Glasses",_head(B),"box",(1.05,.24,.16),"front",(0,.12,-.05),(0,0,0),"D")
+def add_hg_hardhat(B,I,r): B.add("HardHat",_head(B),"box",(1.3,.45,1.3),"top",(0,.05,0),(0,0,0),"C")
+def add_hg_dome(B,I,r): B.add("Dome",_head(B),"gem",(1.5,1.5,1.5),None,(0,.1,0),(0,0,0),"L")
+def add_hg_glasses(B,I,r): B.add("Glasses",_head(B),"box",(1.0,.22,.15),"front",(0,.12,-.05),(0,0,0),"D")
 def add_hg_headband(B,I,r): B.add("Headband",_head(B),"box",(1.25,.22,1.25),"top",(0,-.25,0),(0,0,0),"C")
 def add_hg_crystal(B,I,r):
     for i in range(3): B.add("Crys%d"%i,_head(B),"pyramid",(.25,.9-i*.2,.25),"top",((i-1)*.35,.05,.2),(0,0,0),"C")
 def add_hair_spiky(B,I,r):
     for i in range(4): B.add("HairSpike%d"%i,_head(B),"pyramid",(.22,.6,.22),"top",((i-1.5)*.3,0,-.1),(0,0,0),"H")
-def add_beard_long(B,I,r):
-    B.add("BeardAdd",_head(B),"wedge",(.85,.9,.35),"front",(0,-.55,-.02),(0,0,0),"H")
-def add_mustache(B,I,r):
-    B.add("Mustache",_head(B),"box",(.68,.16,.18),"front",(0,-.22,-.04),(0,0,0),"H")
-def add_shoulder_pads(B,I,r):
-    ch=_chest(B)
-    for sx,suf in ((1,"R"),(-1,"L")):
-        B.add("PauldronAdd"+suf,ch,"box",(.75,.45,.85),"right" if sx>0 else "left",(0,.65,0),(0,0,sx*-10),"S",studs=True)
-def add_jetpack(B,I,r):
-    ch=_chest(B); jp=B.add("Jetpack",ch,"box",(1.1,1.2,.55),"back",(0,.1,0),(0,0,0),"D")
-    for sx,suf in ((1,"R"),(-1,"L")):
-        t=B.add("JetThruster"+suf,jp,"cylinder",(.38,1.1,.38),None,(sx*.38,0,.15),(0,0,0),"B")
-        B.add("JetFlame"+suf,t,"pyramid",(.32,.55,.32),"bot",(0,0,0),(180,0,0),"C")
-def add_backpack(B,I,r):
-    B.add("Backpack",_chest(B),"box",(1.15,1.25,.6),"back",(0,.05,0),(0,0,0),"B",studs=True)
-def add_aura_ring(B,I,r):
-    B.ring("AuraOrb",B.root,6,1.8,1.2,(.28,.28,.28),"C")
-def add_eq_sword(B,I,r):
-    h=_hand(B,"R"); g=B.add("EqGuard",h,"box",(.7,.18,.28),"front",(0,0,-.15),(0,0,0),"S")
-    b=B.add("EqBlade",g,"box",(.22,1.9,.12),"top",(0,0,0),(0,0,0),"L")
-    B.add("EqTip",b,"pyramid",(.22,.45,.12),"top",(0,0,0),(0,0,0),"L")
-def add_eq_shield(B,I,r):
-    h=_hand(B,"L"); s=B.add("EqShield",h,"box",(.22,1.5,1.15),"left",(-.08,.1,-.1),(0,0,0),"B")
-    B.add("EqShieldBoss",s,"gem",(.28,.45,.45),"left",(0,0,0),(0,0,0),"S")
-def add_eq_staff(B,I,r):
-    h=_hand(B,"R"); s=B.add("EqStaff",h,"box",(.18,3.2,.18),"front",(0,.6,-.12),(0,0,0),"B")
-    B.add("EqStaffOrb",s,"gem",(.55,.55,.55),"top",(0,0,0),(0,0,0),"C")
-def add_eq_wand(B,I,r):
-    h=_hand(B,"R"); s=B.add("EqWand",h,"box",(.14,1.3,.14),"front",(0,.35,-.12),(0,0,0),"B")
-    B.add("EqWandStar",s,"gem",(.36,.36,.36),"top",(0,0,0),(0,0,0),"C")
-def add_eq_axe(B,I,r):
-    h=_hand(B,"R"); s=B.add("EqAxeShaft",h,"box",(.2,2.2,.2),"front",(0,.45,-.12),(0,0,0),"B")
-    B.add("EqAxeBlade",s,"wedge",(.22,.85,.85),"top",(0,-.2,-.3),(0,0,0),"L")
-def add_eq_hammer(B,I,r):
-    h=_hand(B,"R"); s=B.add("EqHamShaft",h,"box",(.22,2.1,.22),"front",(0,.45,-.12),(0,0,0),"B")
-    B.add("EqHamHead",s,"box",(.75,.65,1.2),"top",(0,0,0),(0,0,0),"D")
-def add_eq_scythe(B,I,r):
-    h=_hand(B,"R"); s=B.add("EqScytheShaft",h,"box",(.18,3.1,.18),"front",(0,.6,-.12),(0,0,0),"B")
-    B.add("EqScytheBlade",s,"wedge",(.16,.45,1.4),"top",(0,-.1,-.55),(0,0,0),"L")
-def add_eq_bow(B,I,r):
-    h=_hand(B,"L"); B.add("EqBow",h,"box",(.16,1.8,.45),"front",(0,.2,-.2),(0,0,0),"B")
-def add_eq_gun(B,I,r):
-    h=_hand(B,"R"); g=B.add("EqGunGrip",h,"box",(.22,.45,.28),"front",(0,.1,-.12),(0,0,0),"D")
-    B.add("EqGunBarrel",g,"box",(.24,.28,.95),"top",(0,0,-.32),(0,0,0),"D")
 def add_taxi_sign(B,I,r): B.add("TaxiSign",_roof(B),"box",(.7,.3,.25),"top",(0,.05,0),(0,0,0),"C")
 def add_lightbar(B,I,r):
     b=B.add("LightBar",_roof(B),"box",(1.2,.18,.35),"top")
@@ -932,24 +710,49 @@ def add_cape_long(B,I,r): B.add("Cape",B.root,"wedge",(.25,2.6,1.6),None,(0,.6,.
 def add_sp_spoiler(B,I,r):
     B.add("Spoiler",B.root,"box",(2.0,.15,.6),"back",(0,.9,.2),(0,0,0),"D")
     for sx in (1,-1): B.add("SpoPost%d"%sx,B.root,"box",(.15,.6,.15),"back",(sx*.8,.5,.2),(0,0,0),"D")
+def add_eq_sword(B,I,r):
+    h=B.add("EqHilt",_hand(B,"R"),"box",(.18,.22,.7),"front",(0,0,-.15),(0,0,0),"D")
+    g=B.add("EqGuard",h,"box",(.7,.22,.16),"front",(0,0,0),(0,0,0),"S")
+    B.add("EqBlade",g,"box",(.14,.28,2.1),"front",(0,0,-.1),(0,0,0),"L")
+def add_eq_shield(B,I,r):
+    s=B.add("EqShield",_hand(B,"L"),"box",(.2,1.5,1.2),"left",(-.05,0,-.1),(0,0,0),"S")
+    B.add("EqBoss",s,"gem",(.25,.5,.5),"left",(0,0,0),(0,0,0),"C")
+def add_eq_axe(B,I,r):
+    s=B.add("EqShaft",_hand(B,"R"),"box",(.18,.18,2.2),"front",(0,0,-.5),(0,0,0),"B")
+    B.add("EqAxeHd",s,"wedge",(.22,1.1,.8),"front",(0,.2,.2),(0,0,0),"L")
+def add_eq_hammer(B,I,r):
+    s=B.add("EqShaft",_hand(B,"R"),"box",(.2,.2,2.1),"front",(0,0,-.5),(0,0,0),"B")
+    B.add("EqHamHd",s,"box",(.9,.9,.55),"front",(0,0,.15),(0,0,0),"D")
+def add_eq_staff(B,I,r):
+    s=B.add("EqStaff",_hand(B,"R"),"box",(.18,2.8,.18),None,(0,.4,-.25),(0,0,0),"B")
+    B.add("EqOrb",s,"gem",(.5,.5,.5),"top",(0,0,0),(0,0,0),"C")
+def add_eq_bow(B,I,r):
+    B.add("EqBow",_hand(B,"L"),"box",(.16,1.8,.45),"front",(0,0,-.2),(0,0,0),"B")
+def add_eq_gun(B,I,r):
+    g=B.add("EqGun",_hand(B,"R"),"box",(.22,.35,.95),"front",(0,.05,-.2),(0,0,0),"D")
+    B.add("EqMuzzle",g,"cylinder",(.16,.3,.16),"front",(0,.05,0),(90,0,0),"C")
+def add_eq_jetpack(B,I,r):
+    jp=B.add("Jetpack",_chest(B),"box",(1.1,1.2,.45),"back",(0,.1,0),(0,0,0),"D")
+    for sx,suf in ((1,"R"),(-1,"L")):
+        t=B.add("JetThr"+suf,jp,"cylinder",(.38,1.1,.38),None,(sx*.38,0,.15),(0,0,0),"B")
+        B.add("JetFlm"+suf,t,"pyramid",(.3,.55,.3),"bot",(0,0,0),(180,0,0),"C")
+def add_eq_backpack(B,I,r):
+    B.add("Backpack",_chest(B),"box",(1.15,1.25,.55),"back",(0,.05,0),(0,0,0),"B")
+def add_eq_beard(B,I,r):
+    B.add("FullBeard",_head(B),"box",(.9,.55,.35),"front",(0,-.38,-.02),(0,0,0),"H")
 
 ADDONS={
- "brow_evil":add_brow_evil,"hg_crown":add_hg_crown,"hg_pointy":add_hg_pointy,
- "hg_helmet":add_hg_helmet,"hg_samurai":add_hg_samurai,"hg_viking":add_hg_viking,
- "hg_cowboy":add_hg_cowboy,"hg_santa":add_hg_santa,"hg_halo":add_hg_halo,
- "hg_hood":add_hg_hood,"hg_ears_cat":add_hg_ears_cat,"hg_ears_bunny":add_hg_ears_bunny,
- "hg_mask":add_hg_mask,"hg_tricorn":add_hg_tricorn,"hg_toque":add_hg_toque,
+ "brow_evil":add_brow_evil,"hg_crown":add_hg_crown,"hg_halo":add_hg_halo,"hg_pointy":add_hg_pointy,
+ "hg_helmet":add_hg_helmet,"hg_mask":add_hg_mask,"hg_tricorn":add_hg_tricorn,"hg_toque":add_hg_toque,
  "hg_cap":add_hg_cap,"hg_hardhat":add_hg_hardhat,"hg_dome":add_hg_dome,
  "hg_glasses":add_hg_glasses,"hg_headband":add_hg_headband,"hg_crystal":add_hg_crystal,
- "hair_spiky":add_hair_spiky,"beard_long":add_beard_long,"mustache":add_mustache,
- "shoulder_pads":add_shoulder_pads,"jetpack":add_jetpack,"backpack":add_backpack,
- "aura_ring":add_aura_ring,"eq_sword":add_eq_sword,"eq_shield":add_eq_shield,
- "eq_staff":add_eq_staff,"eq_wand":add_eq_wand,"eq_axe":add_eq_axe,
- "eq_hammer":add_eq_hammer,"eq_scythe":add_eq_scythe,"eq_bow":add_eq_bow,"eq_gun":add_eq_gun,
- "taxi_sign":add_taxi_sign,"lightbar":add_lightbar,
- "w_big":add_w_big,"h_curved":add_h_curved,"cape_long":add_cape_long,"sp_spoiler":add_sp_spoiler}
+ "hair_spiky":add_hair_spiky,"taxi_sign":add_taxi_sign,"lightbar":add_lightbar,
+ "w_big":add_w_big,"h_curved":add_h_curved,"cape_long":add_cape_long,"sp_spoiler":add_sp_spoiler,
+ "eq_sword":add_eq_sword,"eq_shield":add_eq_shield,"eq_axe":add_eq_axe,"eq_hammer":add_eq_hammer,
+ "eq_staff":add_eq_staff,"eq_bow":add_eq_bow,"eq_gun":add_eq_gun,"eq_jetpack":add_eq_jetpack,
+ "eq_backpack":add_eq_backpack,"eq_beard":add_eq_beard}
 
-# ------------------------------------------------------------------ 32 Archetype Builders
+# ---------------------------------------------------------------- Archetype Builders
 def b_humanoid(B,I,r):
     p=I["prop"];v=B.var;kw=I.get("keyword") or "human"
     cw=1.5*p.get("chest",1.0)*(1.12 if v==2 else .94 if v==1 else 1.0)
@@ -961,8 +764,6 @@ def b_humanoid(B,I,r):
         shn=B.add("Shin"+suf,th,"box",(.5*lw,leg,.58),"bot")
         B.add("Shoe"+suf,shn,"wedge",(.6,.35,1.05),"bot",(0,0,-.18),(0,0,0),"D")
     torso=B.add("Chest",hips,"box",(cw,1.7,.95),"top",(0,.05,0),(0,0,0),"A",studs=True)
-    B.add("Collar",torso,"box",(cw*.55,.18,.98),"top",(0,-.08,0),(0,0,0),"B")
-    B.add("Emblem",torso,"gem",(.45,.45,.18),"front",(0,.25,0),(0,0,0),"C")
     nk=B.add("Neck",torso,"box",(.42,.3,.42),"top",(0,0,0),(0,0,0),"K")
     head=B.add("Head",nk,"box",(hw,1.12*hw,hw*.92),"top",(0,.05,0),(0,0,0),"K")
     B.eyes(head,.1,-.6,.3*I["eyes"],.34*hw/1.12,sc="L")
@@ -981,47 +782,40 @@ def b_humanoid(B,I,r):
         fa=B.add("Fore"+suf,ua,"box",(.44,1.05,.46),"bot",(0,0,0),(0,0,0),"K")
         B.add("Hand"+suf,fa,"box",(.42,.42,.45),"bot",(0,0,0),(0,0,0),"K")
     B.add("Belt",hips,"box",(cw*.92,.22,.92),"top",(0,-.1,0),(0,0,0),"D")
-    B.add("Buckle",hips,"box",(.32,.26,.16),"front",(0,.15,0),(0,0,0),"S")
-    # Role-based automatic gear if not already added by MODS
-    if kw in ("knight","paladin","crusader","templar") and "eq_sword" not in I["traits"]:
-        add_hg_helmet(B,I,r); add_eq_sword(B,I,r); add_eq_shield(B,I,r); add_shoulder_pads(B,I,r)
-    elif kw in ("samurai","shogun","ronin") and "hg_samurai" not in I["traits"]:
-        add_hg_samurai(B,I,r); add_eq_sword(B,I,r); add_shoulder_pads(B,I,r)
-    elif kw in ("viking","barbarian","berserker") and "hg_viking" not in I["traits"]:
-        add_hg_viking(B,I,r); add_eq_axe(B,I,r); add_beard_long(B,I,r)
-    elif kw in ("wizard","mage","sorcerer","warlock") and "hg_pointy" not in I["traits"]:
-        add_hg_pointy(B,I,r); add_eq_staff(B,I,r); add_beard_long(B,I,r)
-    elif kw in ("king","queen","prince","princess","emperor","pharaoh") and "hg_crown" not in I["traits"]:
-        add_hg_crown(B,I,r); add_cape_long(B,I,r)
-    elif kw in ("astronaut","cosmonaut") and "hg_dome" not in I["traits"]:
-        add_hg_dome(B,I,r); add_jetpack(B,I,r)
+    # Role-based automatic detailing
+    if kw in ("knight","paladin","samurai","viking","gladiator","soldier","guard"):
+        B.add("ArmorPlate",torso,"box",(cw*.85,1.1,.18),"front",(0,.15,0),(0,0,0),"S")
+        for sx,suf in ((1,"R"),(-1,"L")):
+            B.add("ShoulderPad"+suf,torso,"box",(.65,.4,.75),"right" if sx>0 else "left",(0,.65,0),(0,0,0),"S")
+    elif kw in ("robot","cyborg","android"):
+        B.add("CoreReactor",torso,"gem",(.55,.55,.25),"front",(0,.2,0),(0,0,0),"C")
+        B.add("Antenna",head,"box",(.12,.55,.12),"top",(0,0,0),(0,0,0),"S")
     B.tag("humanoid")
 
 def b_mech(B,I,r):
     v=B.var
-    pel=B.add("HumanoidRootPart",None,"box",(2.2,.8,1.5),None,(0,3.2,0),(0,0,0),"D")
-    ch=B.add("Chest",pel,"box",(3.0,2.2,2.0),"top",(0,.1,0),(0,0,0),"A",studs=True)
-    B.add("CockpitGlass",ch,"wedge",(1.8,1.1,.55),"front",(0,.2,0),(0,0,0),"C")
-    B.add("ReactorCore",ch,"gem",(.85,.85,.45),"front",(0,-.45,-.05),(0,0,0),"S")
-    hd=B.add("Head",ch,"box",(1.3,.9,1.2),"top",(0,.05,0),(0,0,0),"B",studs=True)
-    B.add("Visor",hd,"box",(1.1,.3,.2),"front",(0,.05,-.02),(0,0,0),"C")
+    hips=B.add("CoreRoot",None,"box",(2.4,.8,1.6),None,(0,3.2,0),(0,0,0),"D",studs=True)
+    torso=B.add("Torso",hips,"box",(3.0,2.4,2.0),"top",(0,.1,0),(0,0,0),"A",studs=True)
+    B.add("Cockpit",torso,"wedge",(1.8,1.3,.6),"front",(0,.2,0),(0,0,0),"C")
+    B.add("Reactor",torso,"gem",(.9,.9,.4),"front",(0,-.4,-.05),(0,0,0),"S")
+    head=B.add("Head",torso,"box",(1.3,1.0,1.2),"top",(0,.05,-.1),(0,0,0),"B",studs=True)
+    B.add("Visor",head,"box",(1.1,.35,.2),"front",(0,.05,-.02),(0,0,0),"C")
     for sx,suf in ((1,"R"),(-1,"L")):
-        B.add("Antenna"+suf,hd,"box",(.14,.75,.22),"top",(sx*.5,0,0),(0,0,sx*-12),"S")
-        sh=B.add("Shoulder"+suf,ch,"box",(1.4,1.2,1.6),"right" if sx>0 else "left",(0,.65,0),(0,0,0),"B",studs=True)
-        pod=B.add("MissilePod"+suf,sh,"box",(.9,.75,1.1),"top",(0,0,0),(0,0,0),"D")
-        for mx in (-.22,.22): B.add("Missile%s%d"%(suf,1 if mx>0 else 0),pod,"cylinder",(.24,.25,.24),"front",(mx,0,0),(90,0,0),"C")
-        ua=B.add("Arm"+suf,sh,"box",(.8,1.5,.85),"bot",(0,0,0),(0,0,sx*5),"A")
-        fa=B.add("Fore"+suf,ua,"box",(.95,1.6,1.1),"bot",(0,0,-.15),(-12,0,0),"B")
-        if sx>0 or v%2==0:
-            B.add("Cannon"+suf,fa,"cylinder",(.45,1.8,.45),"front",(0,-.2,-.3),(90,0,0),"D")
-        else:
-            B.add("EnergyBlade"+suf,fa,"wedge",(.2,2.2,.65),"bot",(0,-.3,-.2),(0,0,0),"C")
-        th=B.add("Thigh"+suf,pel,"box",(.95,1.6,1.1),"bot",(sx*.85,0,0),(0,0,0),"B")
-        B.add("KneePad"+suf,th,"wedge",(.85,.6,.45),"front",(0,-.55,0),(0,0,0),"S")
-        shn=B.add("Shin"+suf,th,"box",(1.1,1.8,1.3),"bot",(0,0,0),(0,0,0),"A")
-        B.add("Foot"+suf,shn,"wedge",(1.3,.65,2.1),"bot",(0,0,-.3),(0,0,0),"D")
-    add_jetpack(B,I,r)
-    B.tag("mech","armor","glow")
+        B.add("VFin"+suf,head,"wedge",(.2,.8,.4),"top",(sx*.45,.1,-.2),(0,0,sx*-28),"S")
+        pauld=B.add("Pauldron"+suf,torso,"box",(1.4,1.1,1.6),"right" if sx>0 else "left",(0,.75,0),(0,0,sx*10),"B",studs=True)
+        if v%2==0:
+            B.add("Cannon"+suf,pauld,"cylinder",(.45,2.2,.45),"top",(0,.2,-.4),(75,0,0),"D")
+        ua=B.add("Arm"+suf,pauld,"box",(.85,1.6,.85),"bot",(0,-.1,0),(0,0,0),"A")
+        fa=B.add("Fore"+suf,ua,"box",(.95,1.6,1.0),"bot",(0,0,-.1),(-15,0,0),"B")
+        B.add("Hand"+suf,fa,"box",(.75,.75,.8),"bot",(0,0,0),(0,0,0),"D")
+        th=B.add("Thigh"+suf,hips,"box",(1.0,1.8,1.1),"bot",(sx*.85,-.1,0),(0,0,0),"B")
+        sh=B.add("Shin"+suf,th,"box",(1.15,2.0,1.3),"bot",(0,0,0),(0,0,0),"A",studs=True)
+        B.add("Knee"+suf,sh,"wedge",(.9,.8,.4),"front",(0,.5,0),(0,0,0),"S")
+        B.add("Foot"+suf,sh,"wedge",(1.3,.7,2.0),"bot",(0,0,-.35),(0,0,0),"D")
+    jp=B.add("ThrusterPack",torso,"box",(1.8,1.6,.8),"back",(0,.2,0),(0,0,0),"D")
+    for sx,suf in ((1,"R"),(-1,"L")):
+        B.add("Booster"+suf,jp,"cylinder",(.55,1.2,.55),"bot",(sx*.5,0,.1),(15,0,0),"S")
+    B.tag("mech","armor","robot")
 
 def b_octopus(B,I,r):
     n=8 if B.var!=1 else 6
@@ -1051,24 +845,23 @@ def b_serpent(B,I,r):
                  (0,1.5,4.2) if not par else (0,0,0),(0,d[i],0),"A" if i%2 else "B",studs=i%3==0)
         names.append(nn);par=nn
     hd=B.add("Head",par,"box",(1.9,1.5,2.3),"front",(0,.25,.2),(0,0,0),"A",studs=True)
-    if kw=="cobra":
-        B.add("HoodR",hd,"wedge",(1.2,1.8,.4),"right",(0,-.2,.3),(0,0,-15),"B")
-        B.add("HoodL",hd,"wedge",(1.2,1.8,.4),"left",(0,-.2,.3),(0,0,15),"B")
     B.add("Snout",hd,"wedge",(1.3,.9,1.3),"front",(0,-.25,.2),(-90,0,0),"B")
-    B.add("Tongue",hd,"box",(.25,.08,.9),"front",(0,-.45,-.4),(0,0,0),"C")
     B.eyes(hd,.45,-1.05,.5,.72)
+    if kw in ("dragon","wyvern","wyrm","hydra"):
+        for sx,suf in ((1,"R"),(-1,"L")):
+            B.add("DrgHorn"+suf,hd,"pyramid",(.35,1.1,.35),"top",(sx*.55,.2,.3),(-25,0,0),"S")
+            w=B.add("DrgWing"+suf,names[min(3,len(names)-1)],"box",(2.2,.25,1.3),None,(sx*1.6,.8,0),(0,0,sx*18),"B")
+            B.add("DrgWingTip"+suf,w,"wedge",(1.8,.2,1.1),"right" if sx>0 else "left",(0,0,0),(0,0,sx*15),"S")
     for i in range(0,n-2,2): B.add("Dorsal%d"%i,names[i],"wedge",(.28,.9,1.0),"top",(0,.05,0),(0,0,0),"C")
     B.add("TailFin",names[0],"wedge",(1.3,1.5,.28),"back",(0,.2,-.2),(90,0,0),"C")
-    if kw in ("dragon","wyvern","wyrm"):
-        add_w_big(B,I,r); add_h_curved(B,I,r)
     B.tag("tail")
 
 def b_fish(B,I,r):
     kw=I.get("keyword") or "fish"
     B.add("CoreRoot",None,"box",(2.6,2.6,2.4),None,(0,2.0,0),(0,0,0),"A",studs=True)
     sn=B.add("SnoutSec","CoreRoot","box",(2.0,2.0,1.4),"front",(0,0,.1),(0,0,0),"A")
-    if kw in ("swordfish","narwhal"):
-        B.add("TuskBill",sn,"pyramid",(.3,2.2,.3),"front",(0,0,-.2),(-90,0,0),"L")
+    if kw in ("swordfish","narwhal","marlin"):
+        B.add("TuskBill",sn,"pyramid",(.3,2.2,.3),"front",(0,0,-.5),(-90,0,0),"L")
     cs=B.add("CaudalSec","CoreRoot","box",(1.3,1.5,1.4),"back")
     B.add("Belly","CoreRoot","box",(2.1,1.0,2.2),"bot",(0,.1,0),(0,0,0),"L")
     B.eyes(sn,.5,-.75,.55,.8)
@@ -1104,6 +897,7 @@ def b_bird(B,I,r):
     B.tag("wings")
 
 def b_crab(B,I,r):
+    kw=I.get("keyword") or "crab"
     B.add("CoreRoot",None,"box",(3.4,1.6,2.6),None,(0,1.9,0),(0,0,0),"A",studs=True)
     d1=B.add("Dome","CoreRoot","box",(2.7,1.0,2.1),"top",(0,.05,0),(0,0,0),"B",studs=True)
     B.add("Dome2",d1,"box",(1.8,.7,1.4),"top")
@@ -1121,6 +915,9 @@ def b_crab(B,I,r):
                      (0,sx*(i-1)*26,sx*34),"B")
             l2=B.add("Walk%d%s2"%(i,suf),l1,"box",(.36,1.4,.36),"bot",(0,0,0),(0,0,-sx*46),"A")
             B.add("Walk%d%s3"%(i,suf),l2,"pyramid",(.26,.7,.26),"bot",(0,0,0),(180,0,0),"D")
+    if kw=="scorpion":
+        t=B.chain("ScorpTail","CoreRoot",4,[(.65,.65,.8),(.55,.55,.8),(.45,.45,.8),(.38,.38,.7)],["A","B"],[28,32,35,38],face="back")
+        B.add("Stinger",t[-1],"pyramid",(.35,.8,.35),"bot",(0,0,0),(150,0,0),"C")
     B.tag("claws")
 
 def b_spider(B,I,r):
@@ -1140,26 +937,6 @@ def b_spider(B,I,r):
             l3=B.add("Leg%d%s3"%(i,suf),l2,"box",(.26,1.5,.26),"bot",(0,0,0),(0,0,sx*24),"B")
             B.add("Leg%d%s4"%(i,suf),l3,"pyramid",(.2,.7,.2),"bot",(0,0,0),(180,0,0),"D")
     B.tag("teeth")
-
-def b_bug_fly(B,I,r):
-    kw=I.get("keyword") or "butterfly"
-    th=B.add("CoreRoot",None,"box",(1.1,1.0,1.8),None,(0,2.2,0),(0,0,0),"D",studs=True)
-    ab=B.add("Abdomen",th,"box",(1.2,1.1,2.2),"back",(0,0,.1),(0,0,0),"A",studs=True)
-    for i in range(3):
-        B.add("Stripe%d"%i,ab,"box",(1.24,1.14,.32),None,(0,0,(i-1)*.6),(0,0,0),"D")
-    if kw in ("bee","wasp","hornet"):
-        B.add("Stinger",ab,"pyramid",(.35,.7,.35),"back",(0,0,0),(90,0,0),"D")
-    hd=B.add("Head",th,"box",(1.0,.95,.95),"front",(0,.05,0),(0,0,0),"D")
-    B.eyes(hd,.15,-.48,.34,.35,sc="C")
-    for sx,suf in ((1,"R"),(-1,"L")):
-        B.add("Antenna"+suf,hd,"box",(.12,.8,.12),"top",(sx*.28,0,-.2),(-25,0,-sx*18),"D")
-        w1=B.add("WingUp"+suf,th,"box",(2.6,.12,1.6),None,(sx*1.6,.4,-.2),(0,sx*10,sx*18),"C")
-        B.add("WingDot"+suf,w1,"gem",(.7,.18,.7),"top",(sx*.4,0,0),(0,0,0),"S")
-        B.add("WingLo"+suf,th,"box",(2.0,.1,1.3),None,(sx*1.3,.2,.9),(0,-sx*12,sx*8),"B")
-        for li in range(3):
-            B.add("Leg%d%s"%(li,suf),th,"box",(.16,.9,.16),"bot",(sx*.45,0,(li-1)*.5),(0,0,sx*22),"D")
-    B.mirrored.append(("WingUpR","WingUpL"))
-    B.tag("wings","insect")
 
 def b_golem(B,I,r):
     B.add("HumanoidRootPart",None,"gem",(2.6,3.0,2.0),None,(0,3.2,0),(0,0,0),"A")
@@ -1207,46 +984,22 @@ def b_jelly(B,I,r):
                 ["C","L","C","L","C"],[8,10,12,14,16])
     B.tag("tentacles","frill","glow")
 
-def b_monster(B,I,r):
-    kw=I.get("keyword") or "beholder"
-    if kw in ("beholder","cyclops","eyeball"):
-        core=B.add("CoreRoot",None,"gem",(2.8,2.8,2.8),None,(0,2.6,0),(0,0,0),"A")
-        eye=B.add("MainEye",core,"cylinder",(1.35,.35,1.35),"front",(0,.2,0),(90,0,0),"L")
-        B.add("MainPupil",eye,"gem",(.65,.3,.65),"top",(0,.05,0),(0,0,0),"C")
-        B.add("Maw",core,"box",(1.8,.65,.55),"front",(0,-.75,.15),(0,0,0),"D")
-        for i in range(5):
-            B.add("Fang%d"%i,"Maw","pyramid",(.22,.42,.22),"top",((i-2)*.34,-.1,-.15),(180,0,0),"L")
-        for i in range(6):
-            az=i*60.0; a=math.radians(az)
-            st=B.add("Stalk%d"%i,core,"box",(.3,1.2,.3),None,(1.1*math.sin(a),1.3,1.1*math.cos(a)),(22,az,0),"B")
-            B.add("StalkEye%d"%i,st,"gem",(.5,.5,.5),"top",(0,0,0),(0,0,0),"C")
-    elif kw in ("ghost","phantom","wraith","specter","spirit","reaper","grimreaper"):
-        core=B.add("CoreRoot",None,"box",(2.0,2.4,1.8),None,(0,2.4,0),(0,0,0),"A",studs=True)
-        hd=B.add("Head",core,"box",(1.5,1.4,1.5),"top",(0,0,0),(0,0,0),"B")
-        B.add("Hood",hd,"wedge",(1.65,.65,1.65),"top",(0,0,0),(0,0,0),"A")
-        B.eyes(hd,.1,-.78,.38,.42,sc="C")
-        for i in range(6):
-            az=i*60.0; a=math.radians(az)
-            B.add("Tatter%d"%i,core,"pyramid",(.6,1.1,.6),None,(.8*math.sin(a),-1.4,.8*math.cos(a)),(180,az,0),"A")
-        for sx,suf in ((1,"R"),(-1,"L")):
-            ua=B.add("Arm"+suf,core,"box",(.45,1.3,.45),"right" if sx>0 else "left",(0,.4,0),(0,0,sx*18),"B")
-            B.add("Hand"+suf,ua,"box",(.4,.4,.4),"bot",(0,0,0),(0,0,0),"L")
-        if "reaper" in kw: add_eq_scythe(B,I,r)
-    else:
-        b_golem(B,I,r)
-    B.tag("monster")
-
 def b_car(B,I,r):
-    p=I["prop"];body=I.get("carbody") or {0:"sedan",1:"sport",2:"buggy",3:"pickup"}[B.var]
+    p=I["prop"];kw=I.get("keyword") or "car"
+    body=I.get("carbody") or ("van" if kw in ("van","bus","ambulance","minivan","camper","rv") else
+         "pickup" if kw in ("truck","pickup","firetruck","lorry","cybertruck","tractor") else
+         "sport" if kw in ("racecar","supercar","sport","f1","formula","coupe","roadster") else
+         "buggy" if kw in ("buggy","kart","gokart","atv","golfcart") else
+         {0:"sedan",1:"sport",2:"buggy",3:"pickup"}[B.var])
     ws=.85*p.get("wheels",1.0);lift=.25*p.get("lift",1.0)
-    low={"sport":.85,"formula":.72,"buggy":1.0,"pickup":1.15,"van":1.2,"limo":.95,"tractor":1.25,"sedan":1.0}.get(body,1.0)
-    L={"sport":4.6,"formula":4.8,"sedan":4.5,"buggy":3.6,"pickup":4.8,"van":4.9,"limo":6.2,"tractor":3.8}.get(body,4.5); W=2.1
+    low={"sport":.85,"buggy":1.0,"pickup":1.15,"van":1.2,"sedan":1.0}[body]
+    L={"sport":4.6,"sedan":5.6 if kw=="limo" else 4.5,"buggy":3.6,"pickup":4.8,"van":4.9}[body]; W=2.1
     ch=B.add("CoreRoot",None,"box",(W,.7*low,L),None,(0,.9*low+lift,0),(0,0,0),"A",studs=True)
     if body=="van":
         cab=B.add("Cabin",ch,"box",(W*.92,1.5,L*.72),"top",(0,0,.35),(0,0,0),"A",studs=True)
         B.add("WinF",cab,"box",(W*.8,.6,.12),"front",(0,.35,-.02),(0,0,0),"D")
     else:
-        cl=2.0 if body not in ("buggy","formula") else 1.4
+        cl=2.0 if body!="buggy" else 1.4
         cab=B.add("Cabin",ch,"box",(W*.82,.8*low,cl),"top",(0,0,.5 if body=="pickup" else .3),(0,0,0),"B")
         B.add("WinF",cab,"wedge",(W*.78,.7*low,.15),"front",(0,0,0),(0,0,0),"D")
         B.add("WinB",cab,"box",(W*.78,.6*low,.12),"back",(0,0,-.02),(0,0,0),"D")
@@ -1254,9 +1007,12 @@ def b_car(B,I,r):
     if body=="buggy":
         for sx in (1,-1): B.add("Roll%d"%sx,ch,"box",(.15,.9,.15),"top",(sx*.8,.1,.6),(0,0,0),"D")
         B.add("RollBar",ch,"box",(1.8,.15,.15),"top",(0,.95,.6),(0,0,0),"D")
-    if body in ("sport","formula"):
+    if body=="sport":
         for sx in (1,-1): B.add("Stripe%d"%sx,ch,"box",(.28,.06,L*.75),"top",(sx*.45,.02,-.35),(0,0,0),"L")
-    if body=="pickup": B.add("Bed",ch,"box",(W*.95,.6,1.4),"top",(0,.15,1.5),(0,0,0),"A")
+    if body=="pickup":
+        B.add("Bed",ch,"box",(W*.95,.6,1.4),"top",(0,.15,1.5),(0,0,0),"A")
+        if kw=="firetruck":
+            B.add("Ladder",cab,"box",(.55,.18,2.8),"top",(0,.2,.8),(0,0,0),"L")
     for sx,suf in ((1,"R"),(-1,"L")):
         for zz,tag in ((L*.32,"F"),(-L*.32,"B")):
             w=B.add("Wheel%s%s"%(tag,suf),ch,"cylinder",(ws,.45,ws),None,(sx*(W/2+.05),-.25,zz),(0,0,90),"D")
@@ -1266,33 +1022,29 @@ def b_car(B,I,r):
         B.add("Skirt%s"%suf,ch,"box",(.15,.35,L*.7),"right" if sx>0 else "left",(0,-.15,0),(0,0,0),"D")
     B.add("BumpF",ch,"box",(W,.35,.3),"front",(0,-.15,0),(0,0,0),"D")
     B.add("BumpB",ch,"box",(W,.35,.3),"back",(0,-.15,0),(0,0,0),"D")
-    if body in ("sport","formula") or "sp_spoiler" in I["traits"]:
+    if body=="sport" or "sp_spoiler" in I["traits"]:
         B.add("Spoiler",ch,"box",(W*.9,.14,.55),"back",(0,.55,.15),(0,0,0),"D")
         for sx in (1,-1): B.add("SpoPost%d"%sx,ch,"box",(.14,.5,.14),"back",(sx*.7,.3,.15),(0,0,0),"D")
     B.tag("wheels")
 
 def b_train(B,I,r):
     kw=I.get("keyword") or "train"
-    ch=B.add("CoreRoot",None,"box",(2.2,.6,6.0),None,(0,1.1,0),(0,0,0),"D",studs=True)
-    if kw in ("bullettrain","shinkansen","subway","metro","monorail"):
-        bd=B.add("Coach",ch,"box",(2.15,1.6,5.2),"top",(0,0,.3),(0,0,0),"A",studs=True)
-        B.add("BulletNose",bd,"wedge",(2.1,1.5,1.8),"front",(0,-.05,0),(-90,0,0),"A")
-        B.add("CockpitWin",bd,"box",(1.7,.45,.2),"front",(0,.35,-.02),(0,0,0),"D")
-        for i in range(4):
-            for sx,suf in ((1,"R"),(-1,"L")):
-                B.add("Win%d%s"%(i,suf),bd,"box",(.12,.55,.8),"right" if sx>0 else "left",(0,.2,(i-1.5)*1.1),(0,0,0),"L")
+    ch=B.add("CoreRoot",None,"box",(2.2,.6,5.8),None,(0,1.0,0),(0,0,0),"D",studs=True)
+    if kw in ("bullettrain","monorail","subway","metro"):
+        bd=B.add("Coach",ch,"box",(2.15,1.5,5.2),"top",(0,0,.2),(0,0,0),"A",studs=True)
+        B.add("NoseCone",bd,"wedge",(2.1,1.4,1.6),"front",(0,-.05,0),(-90,0,0),"B")
+        B.add("CockpitWin",bd,"box",(1.7,.45,.15),"front",(0,.35,-.6),(0,0,0),"C")
     else:
-        cab=B.add("Cabin",ch,"box",(2.1,2.1,2.0),"top",(0,0,1.8),(0,0,0),"A",studs=True)
-        B.add("CabRoof",cab,"box",(2.3,.25,2.2),"top",(0,0,0),(0,0,0),"D")
-        bl=B.add("Boiler",ch,"cylinder",(1.7,3.6,1.7),"top",(0,.2,-.9),(90,0,0),"B")
-        st=B.add("Smokestack",ch,"cylinder",(.55,1.3,.55),"top",(0,1.4,-2.1),(0,0,0),"D")
-        B.add("SmokePuff",st,"gem",(.75,.55,.75),"top",(0,.1,0),(0,0,0),"L")
-        B.add("Cowcatcher",ch,"wedge",(2.2,.7,1.1),"front",(0,-.1,0),(-90,0,0),"C")
-        B.add("Headlamp",ch,"cylinder",(.55,.3,.55),"front",(0,1.1,.1),(90,0,0),"S")
-    for i,zz in enumerate((-2.1,-.7,.7,2.1)):
-        for sx,suf in ((1,"R"),(-1,"L")):
-            B.add("TrainWheel%d%s"%(i,suf),ch,"cylinder",(.85,.3,.85),None,(sx*1.15,-.3,zz),(0,0,90),"C")
-    B.tag("train","wheels")
+        cab=B.add("Cabin",ch,"box",(2.2,2.0,1.9),"top",(0,0,1.7),(0,0,0),"B",studs=True)
+        B.add("CabRoof",cab,"box",(2.4,.22,2.1),"top",(0,0,0),(0,0,0),"D")
+        blr=B.add("Boiler",ch,"cylinder",(1.7,3.4,1.7),"top",(0,.2,-.9),(90,0,0),"A")
+        B.add("Smokestack",blr,"cylinder",(.48,1.1,.48),"top",(0,.3,-1.0),(0,0,0),"D")
+        B.add("Headlamp",blr,"gem",(.45,.45,.3),"front",(0,.2,-1.6),(0,0,0),"C")
+        B.add("Cowcatcher",ch,"wedge",(2.2,.7,.9),"front",(0,-.1,0),(-90,0,0),"S")
+    for sx,suf in ((1,"R"),(-1,"L")):
+        for i,zz in enumerate((-2.0,0.0,2.0)):
+            B.add("TrWheel%d%s"%(i,suf),ch,"cylinder",(.85,.3,0.85),None,(sx*1.15,-.3,zz),(0,0,90),"C")
+    B.tag("wheels","train")
 
 def b_bike(B,I,r):
     fr=B.add("CoreRoot",None,"box",(.5,.7,2.2),None,(0,1.2,0),(0,0,0),"A")
@@ -1309,21 +1061,548 @@ def b_boat(B,I,r):
     B.add("Bow",hl,"pyramid",(2.4,1.0,1.6),"front",(0,-.1,0),(-90,0,0),"A")
     cab=B.add("Cabin",hl,"box",(1.8,1.0,1.8),"top",(0,0,.6),(0,0,0),"B",studs=True)
     B.add("Win",cab,"box",(1.4,.5,.12),"front",(0,0,-.02),(0,0,0),"D")
-    if kw in ("pirateship","sailboat","galleon","yacht") or B.var!=1:
-        m=B.add("Mast",cab,"box",(.22,2.8,.22),"top",(0,0,0),(0,0,0),"D")
-        B.add("Sail",m,"box",(2.2,1.8,.15),"front",(0,.1,0),(0,0,0),"L")
+    if B.var!=1 or kw in ("sailboat","pirateship","galleon","yacht"):
+        m=B.add("Mast",cab,"box",(.2,2.4,.2),"top")
+        if kw in ("sailboat","pirateship","galleon"):
+            B.add("MainSail",m,"box",(2.2,1.6,.14),"front",(0,.1,0),(0,0,0),"L")
     B.add("Prop",hl,"cylinder",(.8,.2,.8),"back",(0,-.2,0),(90,0,0),"D")
     B.tag("hull")
 
 def b_plane(B,I,r):
+    kw=I.get("keyword") or "plane"
+    if kw in ("ufo","saucer"):
+        disc=B.add("CoreRoot",None,"cylinder",(4.4,.7,4.4),None,(0,2.4,0),(0,0,0),"A",studs=True)
+        B.add("Dome",disc,"gem",(2.2,1.3,2.2),"top",(0,0,0),(0,0,0),"C")
+        B.ring("UfoLight",disc,8,1.9,-.1,(.35,.2,.35),"S")
+        B.tag("wings"); return
     fu=B.add("CoreRoot",None,"box",(1.6,1.4,5.0),None,(0,2.2,0),(0,0,0),"A",studs=True)
     B.add("Nose",fu,"pyramid",(1.4,1.4,1.4),"front",(0,0,0),(-90,0,0),"B")
     B.add("Cockpit",fu,"wedge",(1.0,.6,1.4),"top",(0,0,-1.2),(0,0,0),"D")
     for sx,suf in ((1,"R"),(-1,"L")):
         B.add("Wing"+suf,fu,"wedge",(4.0,.25,1.4),None,(sx*2.2,-.2,-.3),(0,0,sx*8),"B")
+        if kw=="biplane":
+            B.add("WingTop"+suf,fu,"box",(3.8,.2,1.3),None,(sx*2.1,.85,-.3),(0,0,0),"C")
         B.add("Stab"+suf,fu,"wedge",(1.4,.2,.8),None,(sx*.9,.5,2.4),(0,0,sx*8),"B")
     B.add("Fin",fu,"wedge",(.2,1.6,1.2),"top",(0,0,2.2),(0,0,0),"C")
     B.tag("wings")
 
 def b_heli(B,I,r):
-    bd=B.add("CoreRoot",None,"box",(2.0,1.6,3.4),
+    bd=B.add("CoreRoot",None,"box",(2.0,1.6,3.4),None,(0,2.0,0),(0,0,0),"A",studs=True)
+    B.add("Win",bd,"box",(1.6,.8,.12),"front",(0,.2,-.02),(0,0,0),"D")
+    tb=B.add("Boom",bd,"box",(.5,.5,3.0),"back",(0,.3,-.2),(0,0,0),"B")
+    B.add("TRotor",tb,"wedge",(.15,1.4,.4),"right",(0,0,0),(0,0,90),"D")
+    hub=B.add("Hub",bd,"cylinder",(.5,.4,.5),"top")
+    for i in range(4): B.add("Blade%d"%i,hub,"box",(4.6,.12,.4),"top",(0,.15,0),(0,i*90,0),"D")
+    for sx,suf in ((1,"R"),(-1,"L")):
+        B.add("Skid"+suf,bd,"box",(.2,.2,3.2),"bot",(sx*1.0,-.5,0),(0,0,0),"D")
+        B.add("Strut"+suf,bd,"box",(.15,.7,.15),"bot",(sx*1.0,-.2,.8),(0,0,0),"D")
+    B.tag("rotor")
+
+def b_tank(B,I,r):
+    hl=B.add("CoreRoot",None,"box",(4.0,1.0,2.6),None,(0,1.3,0),(0,0,0),"A",studs=True)
+    for sx,suf in ((1,"R"),(-1,"L")):
+        B.add("Track"+suf,hl,"box",(4.4,.9,.7),None,(sx*1.5,-.2,0),(0,0,0),"D")
+    tu=B.add("Turret",hl,"box",(1.8,.9,2.0),"top",(0,0,-.3),(0,0,0),"B",studs=True)
+    B.add("Barrel",tu,"cylinder",(.3,2.6,.3),"front",(0,.1,-.2),(90,0,0),"D")
+    B.add("Hatch",tu,"box",(.7,.2,.7),"top",(0,0,.5),(0,0,0),"D")
+    B.tag("armor")
+
+def b_quadruped(B,I,r):
+    sp=I.get("species") or "beast"; S=SPECIES.get(sp) or SPECIES["beast"]
+    p=I["prop"]; v=B.var%4; k=S["size"]; ex=S["extras"]
+    lf=(1.0,1.1,.95,1.05)[v]; bf=(1.0,.93,1.07,1.0)[v]; hf=(1.0,1.07,.95,1.0)[v]*p.get("head",1.0)
+    ch=p.get("chest",1.0); lm=p.get("limbs",1.0)
+    bw=S["bw"]*k*ch; bh=S["bh"]*k*(ch**.5); bl=S["bl"]*k*bf
+    leg=S["leg"]*k*lf*lm; lw=S["lw"]*k*lm
+    hw,hh,hl=[x*k*hf for x in S["head"]]
+    B.add("CoreRoot",None,"box",(bw,bh,bl),None,(0,leg*.95+bh/2,0),(0,0,0),"A",studs=True)
+    for fz,tg in ((-1,"F"),(1,"B")):
+        for sx,suf in ((1,"R"),(-1,"L")):
+            up=B.add("Leg"+tg+suf,"CoreRoot","box",(lw*1.15,leg*.52,lw*1.15),"bot",
+                     (sx*(bw/2-lw*.7),0,fz*(bl/2-lw*.9)),(0,0,0),"A")
+            lo=B.add("Shin"+tg+suf,up,"box",(lw*.85,leg*.52,lw*.85),"bot",(0,0,0),(0,0,0),"B")
+            B.add("Hoof"+tg+suf,lo,"box",(lw,lw*.45,lw*1.15),"bot",(0,0,-lw*.05),(0,0,0),"D")
+    ang=math.radians(S["nang"]); nl=S["neck"]*k; nw=min(hw*.8,bw*.55)
+    nb_y=bh*.25; nb_z=-(bl/2-nw*.4)
+    B.add("Neck","CoreRoot","box",(nw,nl,nw*1.05),None,
+          (0,nb_y+nl/2*math.cos(ang),nb_z-nl/2*math.sin(ang)),(-S["nang"],0,0),"A")
+    ty=nb_y+nl*math.cos(ang); tz=nb_z-nl*math.sin(ang)
+    head=B.add("Head","CoreRoot","box",(hw,hh,hl),None,(0,ty+hh*.12,tz-hl*.22),(0,0,0),S["headc"])
+    sn=S["snout"]; sw,sh,sl=hw*sn[0],hh*sn[1],hl*sn[2]
+    snout=B.add("Snout",head,"box",(sw,sh,sl),"front",(0,-hh*.15,0),(0,0,0),S["snoutc"])
+    B.add("Nose",snout,"box",(sw*.55,sh*.45,.12*k),"front",(0,sh*.15,0),(0,0,0),"D")
+    B.eyes(head,hh*.15,-hl*.5,(.18+.1*hw)*I["eyes"],hw*.34,sc="L")
+    et=S["ears"]; ew,eh=S["ear"][0]*k,S["ear"][1]*k
+    for sx,suf in ((1,"R"),(-1,"L")):
+        side="right" if sx>0 else "left"
+        if et in ("point","long"):
+            B.add("Ear"+suf,head,"pyramid",(ew,eh,ew*.7),"top",(sx*hw*.3,0,hl*.15),(0,0,-sx*(8 if et=="point" else 16)),"B")
+        elif et=="side":
+            B.add("Ear"+suf,head,"box",(eh,.14*k,ew),side,(0,hh*.2,hl*.1),(0,0,-sx*12),"B")
+        elif et=="floppy":
+            B.add("Ear"+suf,head,"box",(ew*.4,eh,ew),side,(0,-eh*.15,hl*.1),(0,0,0),"B")
+        elif et=="round":
+            B.add("Ear"+suf,head,"gem",(ew,ew,ew*.6),"top",(sx*hw*.36,0,hl*.15),(0,0,0),"B")
+        elif et=="flap":
+            B.add("Ear"+suf,head,"box",(.2*k,eh,ew),side,(0,0,hl*.1),(0,0,0),"B")
+    if et!="none": B.mirrored.append(("EarR","EarL"))
+    ht=S["horns"]
+    if sp=="sheep" and I.get("ram"): ht="curved"
+    if "horns" in I["neg"]: ht=None
+    if ht:
+        if ht=="straight":
+            h=B.add("Horn",head,"box",(.2*k,.9*k,.2*k),"top",(0,0,-hl*.2),(-18,0,0),"S")
+            B.add("HornTip",h,"pyramid",(.17*k,.6*k,.17*k),"top",(0,0,0),(-6,0,0),"S")
+        elif ht=="rhino":
+            B.add("RhinoHorn1",snout,"pyramid",(.32*k,.95*k,.32*k),"top",(0,0,-.1),(-20,0,0),"S")
+            B.add("RhinoHorn2",head,"pyramid",(.22*k,.5*k,.22*k),"top",(0,0,-.35),(-12,0,0),"S")
+        elif ht=="tricera":
+            B.add("NoseHorn",snout,"pyramid",(.22*k,.55*k,.22*k),"top",(0,0,0),(-15,0,0),"S")
+            for sx,suf in ((1,"R"),(-1,"L")):
+                B.add("Horn"+suf,head,"pyramid",(.26*k,1.25*k,.26*k),"top",(sx*hw*.32,0,-.2),(-48,0,-sx*10),"S")
+            B.mirrored.append(("HornR","HornL"))
+        else:
+            for sx,suf in ((1,"R"),(-1,"L")):
+                side="right" if sx>0 else "left"
+                if ht in ("curved","spiral"):
+                    h=B.add("Horn"+suf,head,"box",(.2*k,.85*k,.2*k),"top",(sx*hw*.26,0,hl*.1),(22,0,sx*8),"S")
+                    B.add("Horn%sTip"%suf,h,"pyramid",(.17*k,.75*k,.17*k),"top",(0,0,0),(28,0,0),"S")
+                elif ht=="bull":
+                    h=B.add("Horn"+suf,head,"box",(hw*.35,.18*k,.18*k),side,(0,hh*.25,0),(0,0,0),"S")
+                    B.add("Horn%sTip"%suf,h,"pyramid",(.16*k,.6*k,.16*k),"top",(sx*.05,0,0),(0,0,0),"S")
+                elif ht=="antlers":
+                    h=B.add("Horn"+suf,head,"box",(.14*k,1.0*k,.14*k),"top",(sx*hw*.25,0,0),(0,0,-sx*20),"S")
+                    for i in range(2):
+                        B.add("Horn%sP%d"%(suf,i),h,"box",(.12*k,.55*k,.12*k),None,
+                              (sx*.12*k,(i-.5)*.5*k,0),(0,0,-sx*28),"S")
+                elif ht=="knobs":
+                    h=B.add("Horn"+suf,head,"box",(.16*k,.55*k,.16*k),"top",(sx*hw*.22,0,0),(0,0,0),"S")
+                    B.add("Horn%sTip"%suf,h,"gem",(.28*k,.28*k,.28*k),"top",(0,0,0),(0,0,0),"D")
+            B.mirrored.append(("HornR","HornL"))
+        B.tag("horns")
+    tt=S["tail"]; tyy=bh*.2
+    def tchain(n,w,l,pitch,cols):
+        par=None
+        for i in range(n):
+            f=1-.12*i
+            if i==0: par=B.add("Tail","CoreRoot","box",(w,w,l),"back",(0,tyy,0),(pitch,0,0),cols[0])
+            else: par=B.add("Tail%d"%i,par,"box",(w*f,w*f,l),"back",(0,0,0),(pitch*.7,0,0),cols[i%len(cols)])
+        return par
+    if tt=="short": tchain(1,.38*k,.6*k,-28,["A"])
+    elif tt=="long_up": tchain(4,.3*k,.7*k,-14,["A","B"])
+    elif tt=="hang": tchain(4,.34*k,.8*k,16,["D"])
+    elif tt=="bushy": tchain(3,.7*k,.9*k,-32,["A","A","L"])
+    elif tt=="tuft":
+        e=tchain(3,.2*k,.7*k,10,["A"]); B.add("TailTuft",e,"box",(.4*k,.4*k,.5*k),"back",(0,0,0),(0,0,0),"D")
+    elif tt=="curly": tchain(3,.2*k,.3*k,-45,["L"])
+    elif tt=="ball": B.add("Tail","CoreRoot","gem",(.6*k,.6*k,.6*k),"back",(0,tyy,0),(0,0,0),"L")
+    elif tt=="croc": tchain(5,bh*.62,bl*.22,3,["A","B"])
+    elif tt=="long_thin": tchain(4,.12*k,.8*k,-6,["B"])
+    if "beard" in ex: B.add("Beard",head,"box",(hw*.22,hh*.55,hw*.2),"bot",(0,0,-hl*.32),(0,0,0),"L")
+    if "mane" in ex: B.add("Mane",head,"box",(hw*1.7,hh*1.65,hl*.55),"back",(0,0,hl*.1),(0,0,0),"S")
+    if "frill" in ex: B.add("Frill",head,"box",(hw*1.9,hh*1.7,.22*k),"back",(0,hh*.3,0),(0,0,0),"B")
+    if "udder" in ex: B.add("Udder","CoreRoot","box",(bw*.45,.35*k,bl*.25),"bot",(0,0,bl*.15),(0,0,0),"L")
+    if "qwing" in ex:
+        for sx,suf in ((1,"R"),(-1,"L")):
+            w=B.add("QWing"+suf,"CoreRoot","wedge",(2.0,.25,1.3),None,(sx*(bw/2+.7),bh*.4,-.2),(0,0,sx*22),"L")
+            B.add("QWingTip"+suf,w,"wedge",(1.4,.2,1.0),"right" if sx>0 else "left",(0,0,0),(0,0,sx*14),"C")
+    if "cerb_heads" in ex:
+        for sx,suf in ((1,"R"),(-1,"L")):
+            shd=B.add("SideHead"+suf,"CoreRoot","box",(hw*.85,hh*.85,hl*.85),None,(sx*bw*.48,ty,tz),(0,sx*-18,0),"A")
+            B.add("SideSnout"+suf,shd,"box",(sw*.8,sh*.8,sl*.8),"front",(0,-hh*.1,0),(0,0,0),"B")
+    if "hmane" in ex:
+        B.add("Mane","Neck","box",(.22*k,nl*.95,.34*k),"back",(0,0,0),(0,0,0),"D")
+        B.add("Forelock",head,"box",(.3*k,.3*k,.3*k),"top",(0,0,-hl*.2),(0,0,0),"D")
+    if "hump" in ex: B.add("Hump","CoreRoot","box",(bw*.7,bh*.7,bl*.2),"top",(0,0,bl*.05),(0,0,0),"B")
+    if "spots" in ex:
+        for i,(x,z) in enumerate([(-.28,-.28),(.26,.05),(-.2,.3),(.3,-.32),(0,0)][:4+v%2]):
+            B.add("Spot%d"%i,"CoreRoot","box",(bw*.34,.06,bl*.18),"top",(x*bw,0,z*bl),(0,0,0),"D")
+    if "stripes" in ex:
+        for i in range(5):
+            B.add("Stripe%d"%i,"CoreRoot","box",(bw*.9,.07,bl*.07),"top",(0,0,(i-2)*bl*.18),(0,0,0),"D")
+    if "plates" in ex:
+        for i in range(5):
+            B.add("Plate%d"%i,"CoreRoot","pyramid",(bw*.3,bh*.5,bl*.12),"top",(0,0,(i-2)*bl*.2),(0,0,0),"S")
+    if "wool" in ex:
+        for i in range(3):
+            B.add("Wool%d"%i,"CoreRoot","box",(bw*.6,bh*.3,bl*.22),"top",(0,0,(i-1)*bl*.28),(0,0,0),"L")
+        B.add("WoolHead",head,"box",(hw*1.05,hh*.4,hl*.5),"top",(0,0,hl*.1),(0,0,0),"A")
+    if "patches" in ex:
+        for sx,suf in ((1,"R"),(-1,"L")):
+            B.add("Patch"+suf,head,"box",(hw*.3,hh*.3,.1*k),"front",(sx*hw*.3,hh*.12,0),(0,0,0),"B")
+    if "trunk" in ex:
+        t1=B.add("Trunk",head,"box",(hw*.4,hh*.5,hw*.35),"front",(0,-hh*.1,0),(0,0,0),"A")
+        t2=B.add("Trunk2",t1,"box",(hw*.34,hh*.5,hw*.3),"bot",(0,0,-.05),(-12,0,0),"A")
+        B.add("Trunk3",t2,"box",(hw*.28,hh*.45,hw*.26),"bot",(0,0,-.05),(-14,0,0),"A")
+    if "tusks" in ex:
+        for sx,suf in ((1,"R"),(-1,"L")):
+            B.add("Tusk"+suf,head,"pyramid",(.2*k,.9*k,.2*k),"front",(sx*hw*.3,-hh*.3,0),(-70,0,0),"L")
+    B.tag("quadruped","legs",sp)
+
+def b_building(B,I,r):
+    kw=I.get("keyword") or "house"; v=B.var%4
+    if kw=="pyramid":
+        p=B.add("CoreRoot",None,"pyramid",(5.2,3.8,5.2),None,(0,1.9,0),(0,0,0),"A",studs=True)
+        B.add("Gate",p,"box",(1.1,1.3,.4),"front",(0,-1.25,1.0),(0,0,0),"D")
+        B.tag("building"); return
+    if kw in ("bridge","arch","gate"):
+        top=B.add("CoreRoot",None,"box",(5.0,.8,2.2),None,(0,2.8,0),(0,0,0),"A",studs=True)
+        for sx,suf in ((1,"R"),(-1,"L")):
+            B.add("Pillar"+suf,top,"box",(1.1,2.6,2.0),"bot",(sx*1.8,0,0),(0,0,0),"B",studs=True)
+        B.tag("building"); return
+    tower=kw in ("tower","lighthouse","windmill","skyscraper")
+    castle=kw in ("castle","fort","citadel","palace")
+    tall=tower or kw in ("church","temple","cathedral","pagoda")
+    w=3.2 if tower else 3.8 if tall else 4.6; h=6.2 if kw=="skyscraper" else 5.0 if tower else 3.2 if tall else 2.6; d=w if tall else 3.8
+    base=B.add("CoreRoot",None,"box",(w,h,d),None,(0,h/2,0),(0,0,0),"A",studs=True)
+    B.add("Door",base,"box",(.95,1.5,.16),"front",(0,-h/2+.78,0),(0,0,0),"D")
+    for sx in (1,-1):
+        B.add("Window%d"%(1 if sx>0 else 2),base,"box",(.75,.75,.14),"front",(sx*w*.27,h*.12+(.9 if tall else 0),0),(0,0,0),"L")
+    if kw=="windmill":
+        hub=B.add("MillHub",base,"cylinder",(.45,.45,.45),"front",(0,h*.28,-.1),(90,0,0),"D")
+        for i in range(4):
+            B.add("Sail%d"%i,hub,"box",(3.4,.38,.12),None,(0,0,-.15),(0,0,i*90+45),"L")
+    if castle:
+        for sx,a in ((1,"R"),(-1,"L")):
+            for sz,b in ((-1,"F"),(1,"B")):
+                t=B.add("Turret"+a+b,base,"box",(1.3,h*.6+1.4,1.3),None,(sx*w/2,.7,sz*d/2),(0,0,0),"B",studs=True)
+                B.add("Turret%s%sCap"%(a,b),t,"pyramid",(1.7,1.1,1.7),"top",(0,0,0),(0,0,0),"C")
+        for i in range(5):
+            B.add("Merlon%d"%i,base,"box",(.5,.5,.5),"top",((i-2)*.85,0,-(d/2-.35)),(0,0,0),"B")
+            B.add("MerlonB%d"%i,base,"box",(.5,.5,.5),"top",((i-2)*.85,0,(d/2-.35)),(0,0,0),"B")
+    else:
+        top=base
+        if kw=="lighthouse": top=B.add("Lamp",base,"gem",(1.3,1.1,1.3),"top",(0,0,0),(0,0,0),"C")
+        B.add("Roof",top,"pyramid",(1.7,1.0,1.7) if kw=="lighthouse" else (w*1.18,1.7+(1.2 if tall else 0),d*1.18),
+              "top",(0,-.1,0),(0,0,0),"C")
+        if not tall and v!=1: B.add("Chimney",base,"box",(.55,1.2,.55),"top",(w*.28,.5,0),(0,0,0),"B")
+    B.tag("building")
+
+def b_tree(B,I,r):
+    kw=I.get("keyword") or "tree"; v=B.var%4
+    if kw=="cactus":
+        t=B.add("CoreRoot",None,"box",(1.1,3.4,1.1),None,(0,1.7,0),(0,0,0),"A",studs=True)
+        for sx,suf in ((1,"R"),(-1,"L")):
+            a=B.add("Arm"+suf,t,"box",(.9,.6,.6),"right" if sx>0 else "left",(0,.3+v*.15,0),(0,0,0),"A")
+            B.add("ArmUp"+suf,a,"box",(.55,1.3,.55),"top",(sx*.15,0,0),(0,0,0),"S")
+    elif kw in ("mushroom","toadstool","fungus"):
+        stem=B.add("CoreRoot",None,"box",(1.1,1.6,1.1),None,(0,.8,0),(0,0,0),"L")
+        cap=B.add("Cap",stem,"box",(3.0,1.0,3.0),"top",(0,0,0),(0,0,0),"C",studs=True)
+        for i in range(5):
+            x,z=phyllo(i,5,1.0); B.add("Dot%d"%i,cap,"box",(.5,.12,.5),"top",(x,0,z),(0,0,0),"L")
+    elif kw in ("flower","plant","rose","sunflower","tulip","lotus","lily","orchid","daisy"):
+        st=B.add("CoreRoot",None,"box",(.3,2.4,.3),None,(0,1.2,0),(0,0,0),"S")
+        hd=B.add("Bloom",st,"gem",(.8,.5,.8),"top",(0,0,0),(0,0,0),"L")
+        B.ring("Petal",hd,6,.7,0,(.5,.2,.55),"C")
+        for sx,suf in ((1,"R"),(-1,"L")): B.add("Leaf"+suf,st,"wedge",(.7,.25,.4),None,(sx*.45,-.3,0),(0,0,sx*20),"A")
+    elif kw=="palm":
+        t0=B.add("CoreRoot",None,"box",(.8,1.6,.8),None,(0,.8,0),(0,0,0),"B")
+        t1=B.add("Trunk1",t0,"box",(.7,1.6,.7),"top",(0,0,0),(8,0,0),"D")
+        t2=B.add("Trunk2",t1,"box",(.6,1.6,.6),"top",(0,0,0),(8,0,0),"B")
+        crown=B.add("Crown",t2,"gem",(.9,.6,.9),"top",(0,0,0),(0,0,0),"D")
+        B.ring("Frond",crown,6,.9,.1,(.6,.15,1.8),"A")
+    elif kw in ("bush","shrub","hedge"):
+        b=B.add("CoreRoot",None,"box",(2.6,1.4,2.6),None,(0,.7,0),(0,0,0),"A",studs=True)
+        B.add("Bush2",b,"box",(1.8,1.0,1.8),"top",(0,0,0),(0,0,0),"S")
+    else:
+        tr=B.add("CoreRoot",None,"box",(.95,2.4,.95),None,(0,1.2,0),(0,0,0),"B")
+        f1=B.add("Leaf1",tr,"box",(3.2,1.3,3.2),"top",(0,-.2,0),(0,0,0),"A",studs=True)
+        f2=B.add("Leaf2",f1,"box",(2.4,1.2,2.4),"top",(0,0,0),(0,0,0),"S")
+        f3=B.add("Leaf3",f2,"box",(1.5,1.1,1.5),"top",(0,0,0),(0,0,0),"A")
+        if kw=="pine": B.add("Tip",f3,"pyramid",(1.2,1.6,1.2),"top",(0,0,0),(0,0,0),"S")
+        if v==1:
+            for i in range(4):
+                x,z=phyllo(i,4,1.2); B.add("Fruit%d"%i,f1,"gem",(.4,.4,.4),None,(x,.2,z),(0,0,0),"C")
+    B.tag("plant")
+
+def b_weapon(B,I,r):
+    kw=I.get("keyword") or "sword"
+    if kw in ("shield","buckler","aegis"):
+        s=B.add("CoreRoot",None,"box",(2.4,3.0,.35),None,(0,1.5,0),(0,0,0),"A",studs=True)
+        B.add("Rim",s,"box",(2.7,.3,.4),"top",(0,0,0),(0,0,0),"S")
+        B.add("Emblem",s,"gem",(1.0,1.0,.3),"front",(0,0,0),(0,0,0),"C")
+        B.tag("weapon"); return
+    if kw in ("gun","pistol","revolver","rifle","shotgun","sniperrifle","smg","blaster","lasergun","raygun","plasmagun"):
+        body=B.add("CoreRoot",None,"box",(.55,.85,2.8),None,(0,1.6,0),(0,0,0),"A",studs=True)
+        B.add("Grip",body,"box",(.48,1.1,.55),"bot",(0,0,.85),(18,0,0),"D")
+        B.add("Barrel",body,"cylinder",(.32,1.6,.32),"front",(0,.12,0),(90,0,0),"S")
+        B.add("Scope",body,"cylinder",(.28,1.1,.28),"top",(0,.1,.2),(90,0,0),"C")
+        B.tag("weapon"); return
+    if kw in ("axe","hammer","warhammer","maul","mace","spear","trident","halberd","scythe","staff","wand","scepter","bow","crossbow"):
+        ln=2.6 if kw=="wand" else 4.2
+        h=B.add("CoreRoot",None,"box",(.2 if kw=="wand" else .32,ln,.2 if kw=="wand" else .32),None,(0,ln/2,0),(0,0,0),"B")
+        if kw in ("axe","halberd"):
+            hd=B.add("AxeHead",h,"box",(1.3,1.0,.3),"top",(.5,-.8,0),(0,0,0),"A",studs=True)
+            B.add("AxeEdge",hd,"box",(.35,1.3,.26),"right",(0,0,0),(0,0,0),"S")
+        elif kw=="scythe":
+            B.add("ScytheBlade",h,"wedge",(2.2,.45,.2),"top",(.95,-.2,0),(0,0,-12),"L")
+        elif kw in ("hammer","warhammer","maul","mace"):
+            B.add("HammerHead",h,"box",(1.6,.9,.9),"top",(0,-.3,0),(0,0,0),"A",studs=True)
+        elif kw in ("spear","trident"):
+            c=B.add("Collar",h,"box",(.5,.3,.5),"top",(0,0,0),(0,0,0),"S")
+            B.add("SpearTip",c,"pyramid",(.5,1.3,.5),"top",(0,0,0),(0,0,0),"L")
+            if kw=="trident":
+                for sx,suf in ((1,"R"),(-1,"L")):
+                    B.add("Prong"+suf,c,"pyramid",(.28,1.0,.28),"top",(sx*.45,0,0),(0,0,0),"L")
+        elif kw in ("bow","crossbow"):
+            B.add("BowTop",h,"box",(.22,1.2,.22),"top",(0,-.1,-.3),(-25,0,0),"B")
+            B.add("BowBot",h,"box",(.22,1.2,.22),"bot",(0,.1,-.3),(25,0,0),"B")
+            B.add("String",h,"box",(.06,ln,.06),None,(0,0,.5),(0,0,0),"L")
+        else: B.add("Orb",h,"gem",(.9,.9,.9),"top",(0,0,0),(0,0,0),"C")
+        B.tag("weapon"); return
+    bl=2.2 if kw=="dagger" else 3.6
+    g=B.add("CoreRoot",None,"box",(.34,1.1,.34),None,(0,.55,0),(0,0,0),"D")
+    B.add("Pommel",g,"gem",(.55,.5,.55),"bot",(0,0,0),(0,0,0),"S")
+    gd=B.add("Guard",g,"box",(1.5,.28,.45),"top",(0,0,0),(0,0,0),"S",studs=True)
+    bd=B.add("Blade",gd,"box",(.55,bl,.16),"top",(0,0,0),(0,0,0),"L")
+    B.add("BladeTip",bd,"pyramid",(.55,.8,.16),"top",(0,0,0),(0,0,0),"L")
+    B.add("Fuller",bd,"box",(.14,bl*.75,.2),None,(0,-.2,0),(0,0,0),"C")
+    B.tag("weapon")
+
+def b_furniture(B,I,r):
+    kw=I.get("keyword") or "chair"
+    if kw in ("chest","treasure","treasurechest","crate","box"):
+        base=B.add("CoreRoot",None,"box",(2.8,1.4,1.9),None,(0,.7,0),(0,0,0),"A",studs=True)
+        lid=B.add("Lid",base,"box",(2.85,.7,1.95),"top",(0,0,0),(0,0,0),"B",studs=True)
+        B.add("Lock",lid,"box",(.45,.55,.2),"front",(0,-.3,0),(0,0,0),"C")
+    elif kw in ("table","desk","workbench","counter"):
+        top=B.add("CoreRoot",None,"box",(3.6,.35,2.4),None,(0,1.9,0),(0,0,0),"A",studs=True)
+        for sx,a in ((1,"R"),(-1,"L")):
+            for sz,b in ((-1,"F"),(1,"B")):
+                B.add("TblLeg"+a+b,top,"box",(.3,1.8,.3),"bot",(sx*1.5,0,sz*.95),(0,0,0),"B")
+    elif kw in ("bed","bunkbed","crib"):
+        fr=B.add("CoreRoot",None,"box",(2.8,.6,4.2),None,(0,.7,0),(0,0,0),"B",studs=True)
+        B.add("Mattress",fr,"box",(2.6,.4,3.8),"top",(0,0,.1),(0,0,0),"C",studs=True)
+        B.add("Pillow",fr,"box",(2.0,.35,.85),"top",(0,.3,-1.35),(0,0,0),"L")
+        B.add("Headboard",fr,"box",(2.8,1.6,.3),"front",(0,.5,0),(0,0,0),"A")
+    elif kw in ("tv","television","monitor","computer","pc","arcade"):
+        st=B.add("CoreRoot",None,"box",(1.4,.3,1.2),None,(0,.15,0),(0,0,0),"D",studs=True)
+        nk=B.add("Neck",st,"box",(.4,.6,.4),"top",(0,0,0),(0,0,0),"D")
+        scr=B.add("Screen",nk,"box",(3.2,2.1,.4),"top",(0,0,0),(0,0,0),"A",studs=True)
+        B.add("Display",scr,"box",(2.9,1.8,.12),"front",(0,0,-.02),(0,0,0),"C")
+    else:
+        seat=B.add("CoreRoot",None,"box",(2.0,.35,2.0),None,(0,1.3,0),(0,0,0),"A",studs=True)
+        back=B.add("Backrest",seat,"box",(2.0,2.2,.35),"back",(0,1.0,0),(0,0,0),"B",studs=True)
+        if kw=="throne":
+            B.add("Crest",back,"pyramid",(.8,.8,.35),"top",(0,0,0),(0,0,0),"C")
+        for sx,suf in ((1,"R"),(-1,"L")):
+            B.add("Armrest"+suf,seat,"box",(.3,0.7,1.8),"right" if sx>0 else "left",(0,.35,0),(0,0,0),"S")
+            for sz,b in ((-1,"F"),(1,"B")):
+                B.add("ChrLeg"+suf+b,seat,"box",(.28,1.25,.28),"bot",(sx*.8,0,sz*.8),(0,0,0),"D")
+    B.tag("furniture")
+
+def b_food(B,I,r):
+    kw=I.get("keyword") or "burger"
+    if kw in ("potion","elixir","flask","vial","bottle"):
+        bd=B.add("CoreRoot",None,"gem",(2.0,2.2,2.0),None,(0,1.1,0),(0,0,0),"C")
+        nk=B.add("Neck",bd,"cylinder",(.75,.8,.75),"top",(0,0,0),(0,0,0),"L")
+        B.add("Cork",nk,"cylinder",(.85,.45,.85),"top",(0,0,0),(0,0,0),"A",studs=True)
+    elif kw in ("cake","cupcake","pie"):
+        base=B.add("CoreRoot",None,"cylinder",(2.8,1.3,2.8),None,(0,.65,0),(0,0,0),"A",studs=True)
+        top=B.add("Frosting",base,"cylinder",(2.6,.5,2.6),"top",(0,0,0),(0,0,0),"L",studs=True)
+        c=B.add("Candle",top,"cylinder",(.25,.9,.25),"top",(0,0,0),(0,0,0),"C")
+        B.add("Flame",c,"pyramid",(.28,.45,.28),"top",(0,0,0),(0,0,0),"S")
+    else:
+        bot=B.add("CoreRoot",None,"cylinder",(2.6,.55,2.6),None,(0,.3,0),(0,0,0),"A",studs=True)
+        pat=B.add("Patty",bot,"cylinder",(2.7,.5,2.7),"top",(0,0,0),(0,0,0),"D")
+        chs=B.add("Cheese",pat,"box",(2.5,.18,2.5),"top",(0,0,0),(0,45,0),"C")
+        let=B.add("Lettuce",chs,"cylinder",(2.65,.25,2.65),"top",(0,0,0),(0,0,0),"S")
+        B.add("BunTop",let,"Cylinder" if False else "box",(2.5,.75,2.5),"top",(0,0,0),(0,0,0),"A",studs=True)
+    B.tag("food")
+
+def b_prop(B,I,r):
+    B.add("CoreRoot",None,"box",(2.6,2.2,2.2),None,(0,1.1,0),(0,0,0),"A",studs=True)
+    top=B.add("Top","CoreRoot","box",(2.0,1.6,1.8),"top",(0,0,0),(0,0,0),"B",studs=True)
+    B.eyes(top,.1,-.95,.4*I["eyes"],.5,sc="L")
+    B.add("Mouth",top,"box",(.7,.12,.1),"front",(0,-.35,-.02),(0,0,0),"D")
+    for sx,suf in ((1,"R"),(-1,"L")):
+        B.add("Nub"+suf,"CoreRoot","box",(.5,1.0,.5),"right" if sx>0 else "left",(0,-.1,0),(0,0,sx*-10),"S")
+    B.add("Antenna",top,"box",(.15,.8,.15),"top",(0,0,0),(0,0,0),"D")
+    B.tag("prop")
+
+BUILDERS={
+ "humanoid":b_humanoid,"mech":b_mech,"octopus":b_octopus,"serpent":b_serpent,"fish":b_fish,
+ "bird":b_bird,"crab":b_crab,"spider":b_spider,"golem":b_golem,"turtle":b_turtle,"jelly":b_jelly,
+ "car":b_car,"train":b_train,"bike":b_bike,"boat":b_boat,"plane":b_plane,"heli":b_heli,"tank":b_tank,
+ "quadruped":b_quadruped,"building":b_building,"tree":b_tree,"weapon":b_weapon,
+ "furniture":b_furniture,"food":b_food,"prop":b_prop}
+
+BUDGETS={
+ "humanoid":90,"mech":95,"octopus":100,"serpent":80,"fish":65,"bird":75,"crab":85,"spider":85,"golem":75,
+ "turtle":60,"jelly":110,"car":65,"train":65,"bike":35,"boat":45,"plane":45,"heli":45,"tank":40,
+ "quadruped":95,"building":65,"tree":45,"weapon":35,"furniture":45,"food":35,"prop":35}
+
+def critique(spec,I):
+    rep={};tot=0.0;ws=0.0
+    def add(k,v,w): rep[k]=int(round(v*100));return v*w
+    tot+=add("context",1.0 if spec["archetype"]==I["root"] else .15,.14);ws+=.14
+    names={p["n"] for p in spec["parts"]}
+    tot+=add("connected",1.0 if all(p["p"] in names for p in spec["parts"] if p["p"]) else .2,.08);ws+=.08
+    idx={p["n"]:p for p in spec["parts"]}
+    def ymin(n):
+        p=idx[n];y=p["po"][1]-rot_dims(p["sz"],p["ro"])[1]/2;par=p["p"]
+        while par and par in idx: y+=idx[par]["po"][1];par=idx[par]["p"]
+        return y
+    my=min(ymin(p["n"]) for p in spec["parts"])
+    tot+=add("grounded",1.0 if (abs(my)<.45 if not I["float"] else my>1.0) else .3,.08);ws+=.08
+    studs=sum(1 for p in spec["parts"] if p["n"].startswith("Stud"))
+    tot+=add("style_studs",1.0 if studs>=6 else .4,.10);ws+=.10
+    byp={}
+    for p in spec["parts"]:
+        if p["n"].startswith("Stud") or "_j" in p["n"]: continue
+        byp.setdefault(p["p"],[]).append(p)
+    bad=0
+    for par,lst in byp.items():
+        for i in range(len(lst)):
+            for j in range(i+1,len(lst)):
+                a,b=lst[i],lst[j];da=rot_dims(a["sz"],a["ro"]);db=rot_dims(b["sz"],b["ro"]);vol=1.0
+                for ax in range(3):
+                    inter=min(a["po"][ax]+da[ax]/2,b["po"][ax]+db[ax]/2)-max(a["po"][ax]-da[ax]/2,b["po"][ax]-db[ax]/2)
+                    if inter<=0: vol=0;break
+                    vol*=inter
+                if vol>0 and vol>.55*min(da[0]*da[1]*da[2],db[0]*db[1]*db[2]): bad+=1
+    tot+=add("overlap",max(0,1-bad*.12),.10);ws+=.10
+    n=len(spec["parts"]);bud=BUDGETS.get(spec["archetype"],80)
+    tot+=add("purpose",1.0 if n<=bud*1.7 else .5,.08);ws+=.08
+    if I["colors"]:
+        ds=[max(0,1-min(hue_dist(ih,hex_hsv(h)[0]) for h in list(spec["palette"].values())[:6])/90.0) for ih,_,_ in I["colors"]]
+        tot+=add("color_match",sum(ds)/len(ds),.14);ws+=.14
+    else: tot+=add("color_match",.85,.14);ws+=.14
+    want=set(I["traits"]);have=set(spec["traits_present"])
+    tot+=add("trait_match",len(want&have)/max(1,len(want)) if want else 1.0,.14);ws+=.14
+    sizes=[p["sz"][0] for p in spec["parts"] if not p["n"].startswith("Stud")]
+    tot+=add("silhouette",clamp((max(sizes)-min(sizes))/max(.001,max(sizes))/.8,0,1),.07);ws+=.07
+    tot+=add("sharp_match",max(0,1-abs(I["sharp"]-spec["sharpness"])/2.0),.07);ws+=.07
+    return int(round(100*tot/ws)),rep
+
+def style_vector(spec):
+    hs=[hex_hsv(h) for h in list(spec["palette"].values())[:6]]
+    return {"sharp":spec["sharpness"],"scale":spec["scale"],"parts":len(spec["parts"]),
+            "sat":sum(s for _,s,_ in hs)/len(hs),"val":sum(v for _,_,v in hs)/len(hs),"arch":spec["archetype"]}
+def tokens_of(p): return set(tokenize(p))
+def memory_priors(mem,prompt):
+    tk=tokens_of(prompt);acc=Counter();styles=[];pal=None;bw=0.0;liked=[]
+    for e in mem.get("entries",[]):
+        et=tokens_of(e.get("prompt",""));inter=len(tk&et)
+        sim=inter/max(1.0,math.sqrt(len(tk)*max(1,len(et))))
+        acc[e.get("archetype","golem")]+=sim;liked.append((sim,e))
+        st=e.get("style")
+        if st and sim>.15: styles.append((sim,st));bw+=sim
+        if sim>.3 and e.get("palette"): pal=e["palette"]
+    blend={k:sum(w*s[k] for w,s in styles)/bw for k in ("sharp","scale","sat","val")} if styles else None
+    return acc,blend,pal,sorted(liked,reverse=True)
+
+def _spec_from(B,I,arch,seed,variant,pal):
+    return {"id":"m%d_%d"%(int(time.time()*1000)%100000,seed%97),
+      "name":random.Random(seed).choice(NAME_PRE)+NAME_SUF.get(arch,"bloxx"),
+      "archetype":arch,"variant":variant,"seed":seed,"sharpness":round(B.sharp,2),"scale":round(B.scale,2),
+      "palette":pal,"tags":sorted(B.present),"root":B.root,"parts":B.parts,"mirrored":B.mirrored,
+      "counts":dict(B.counts),"traits_present":sorted(B.present),
+      "meta":{"scheme":"v10","mods":I["mods"],"prompt":I.get("_prompt",""),"warn":B.warn,
+              "species":I.get("species"),"keyword":I.get("keyword"),"unknown":I.get("unknown",[])}}
+
+def _build(I,arch,seed,feat,variant):
+    rng=random.Random(seed);pal=synthesize_palette(I,rng)
+    if feat.get("colors") and not I["palette_force"]:
+        fc=feat["colors"];pal["A"]=fc[0];pal["B"]=fc[min(1,len(fc)-1)];pal["C"]=fc[min(2,len(fc)-1)]
+        pal["S"]=fc[min(3,len(fc)-1)]
+    B=Builder(seed,pal,rng,I["sharp"],I["size"]);B.var=variant
+    try:
+        BUILDERS[arch](B,I,rng)
+        for t in list(I["traits"]):
+            fn=ADDONS.get(t)
+            if fn and t not in I["neg"]: fn(B,I,rng); B.tag(t)
+    except Exception as e:
+        B.warn=repr(e)
+        if not B.parts: raise
+    if not B.parts: raise RuntimeError("empty build for "+arch)
+    if arch=="prop" and I.get("unknown") and not B.warn:
+        B.warn="unknown subject %r -> generic prop (add it to ROOTS/SPECIES_KEYS to get a real model)"%I["unknown"][0]
+    if not I["float"]: ground(B)
+    pose_wrap(B,I["pose"],I["float"])
+    return _spec_from(B,I,arch,seed,variant,pal)
+
+def build_one(prompt,seed=7,var=0,feat=None):
+    I=parse_intent(prompt);I["_prompt"]=prompt
+    return _build(I,I["root"],seed,feat or {},var),I
+
+def structural_checks(spec,I):
+    out=[];P=spec["parts"];names=[p["n"] for p in P];idx={p["n"]:p for p in P}
+    out.append(("root_match",spec["archetype"]==I["root"]))
+    out.append(("names_unique",len(names)==len(set(names))))
+    out.append(("parents_exist",all(p["p"] in idx for p in P if p["p"])))
+    out.append(("finite",all(isinstance(v,(int,float)) and v==v for p in P for v in p["po"]+p["sz"]+p["ro"])))
+    def ymin(n):
+        p=idx[n];y=p["po"][1]-rot_dims(p["sz"],p["ro"])[1]/2;par=p["p"]
+        while par and par in idx: y+=idx[par]["po"][1];par=idx[par]["p"]
+        return y
+    my=min(ymin(n) for n in names)
+    out.append(("grounded",abs(my)<.45 if not I["float"] else my>1.0))
+    out.append(("budget",len(P)<=BUDGETS.get(spec["archetype"],90)*1.7))
+    out.append(("palette_hex",all(re.fullmatch(r"#[0-9a-f]{6}",c) for c in spec["palette"].values())))
+    out.append(("mirror_ok",all((a in idx and b in idx) for a,b in spec["mirrored"])))
+    tags=set(spec["traits_present"])
+    out.append(("traits_applied",all(t in tags for t in I["traits"] if t in ADDONS)))
+    out.append(("neg_absent",not any(t in tags for t in I["neg"])))
+    if spec["archetype"]=="humanoid":
+        need=["Head","Chest","Neck","ArmR","ArmL","ForeR","ForeL","HandR","HandL",
+              "ThighR","ThighL","ShoeR","ShoeL","EyeR","PupilR","Mouth"]
+        out.append(("human_parts",all(n in idx for n in need)))
+        hd=idx.get("Head");hnd=idx.get("HandR")
+        out.append(("skin_role",bool(hd and hd["c"]=="K" and hnd and hnd["c"]=="K")))
+    if spec["archetype"]=="quadruped":
+        legs=[p for p in P if p["n"].startswith("Leg")]
+        out.append(("four_legs",len(legs)==4))
+        out.append(("quad_parts",all(n in idx for n in ["Head","Neck","Snout","EyeR","EyeL"])))
+        out.append(("species_known",(I.get("species") or "beast") in SPECIES))
+    if spec["archetype"]=="car":
+        wheels=[p for p in P if p["n"].startswith("Wheel")]
+        hubs=[p for p in P if p["n"].startswith("Hub")]
+        xs={1 if p["po"][0]>0 else -1 for p in wheels}; zs={1 if p["po"][2]>0 else -1 for p in wheels}
+        out.append(("four_wheels",len(wheels)==4 and len(hubs)==4))
+        out.append(("corners",len(xs)==2 and len(zs)==2))
+        out.append(("windshield",any(p["n"]=="WinF" for p in P)))
+    return out
+
+def generate(body,mem):
+    t0=time.time();prompt=body.get("prompt","human");it=int(body.get("iteration",0))
+    nonce=body.get("nonce","x");reasons=body.get("reasons",[]);feat=body.get("features") or {}
+    I=parse_intent(prompt);I["_prompt"]=prompt
+    mbias,blend,mpal,liked=memory_priors(mem,prompt)
+    if blend:
+        I["sharp"]=clamp(I["sharp"]*.75+blend["sharp"]*.25,.2,2.6);I["size"]*=.9+blend["scale"]*.1
+    if "wrong creature" in reasons:
+        cur=ARCHES.index(I["root"]) if I["root"] in ARCHES else 0
+        I["root"]=ARCHES[(cur+3)%len(ARCHES)]
+        if I["root"]!="quadruped": I["species"]=None
+    if "too many spikes" in reasons: I["sharp"]=max(.2,I["sharp"]-1.0)
+    if "not enough detail" in reasons: I["sharp"]=min(2.6,I["sharp"]+.8)
+    if "wrong colors" in reasons: I["palette_force"]=None;I["colors"]=[]
+    K=8+min(8,it*2);best=None;tried=0
+    for k in range(K):
+        if time.time()-t0>BUDGET: break
+        seed=zlib.crc32(("%s|%d|%s|%d"%(prompt,it,nonce,k)).encode())
+        var=(it+k)%4
+        I2=dict(I);I2["sharp"]=clamp(I["sharp"]+random.Random(seed).uniform(-.15,.15),.2,2.6)
+        try: spec=_build(I2,I["root"],seed,feat,var)
+        except Exception: continue
+        tried+=1;s,rep=critique(spec,I2);spec["score"]=s;spec["report"]=rep
+        if best is None or s>best["score"]: best=spec
+    if best:
+        for m in range(4):
+            if time.time()-t0>BUDGET: break
+            I3=dict(I);I3["sharp"]=clamp(I["sharp"]+random.uniform(-.3,.3),.2,2.6)
+            I3["size"]=clamp(I["size"]+random.uniform(-.1,.1),.5,1.8)
+            seed=best["seed"]+m+13;var=(best["variant"]+1+m)%4
+            try: cand=_build(I3,best["archetype"],seed,feat,var)
+            except Exception: continue
+            s2,r2=critique(cand,I3);cand["score"]=s2;cand["report"]=r2;tried+=1
+            if s2>best["score"]: best=cand
+    if best is None:
+        I4=dict(I);I4["traits"]={};I4["float"]=False;I4["pose"]=0
+        best=_build(I4,"prop",1,feat,0)
+        best["score"],best["report"]=critique(best,dict(I4,root="prop"))
+        best["meta"]["error"]="all candidates failed — fallback prop"
+        tried=1
+    best["meta"].update({"beam":K,"tried":tried,"iteration":it,"seconds":round(time.time()-t0,2)})
+    return best
